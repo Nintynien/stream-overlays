@@ -17,7 +17,7 @@ A lightweight framework for creating interactive stream overlays that respond to
 1. Add a new **Browser Source** in OBS
 2. Set the URL with your channel name(s):
    ```
-   file:///C:/path/to/stream-overlays/src/overlays/emoji-rain/index.html?twitch=your_channel
+   file:///C:/path/to/stream-overlays/emoji-rain/index.html?twitch=your_channel
    ```
 3. Set Width: `1920` and Height: `1080` (or your stream resolution)
 4. Done! Type emojis in chat to see them fall
@@ -40,7 +40,7 @@ Emojis and emotes from chat fall from top to bottom like rain.
 
 **URL:**
 ```
-file:///C:/path/to/stream-overlays/src/overlays/emoji-rain/index.html?twitch=your_channel
+file:///C:/path/to/stream-overlays/emoji-rain/index.html?twitch=your_channel
 ```
 
 **URL Parameters:**
@@ -61,7 +61,7 @@ Matrix-style falling code effect with chat messages mixed in.
 
 **URL:**
 ```
-file:///C:/path/to/stream-overlays/src/overlays/matrix/index.html?twitch=your_channel
+file:///C:/path/to/stream-overlays/matrix/index.html?twitch=your_channel
 ```
 
 **URL Parameters:**
@@ -214,11 +214,6 @@ stream-overlays/
 - 🏆 Chat activity leaderboard
 - 🔥 Word cloud from chat messages
 - 🎵 Music visualizer synced to chat activity
-
-## Technical Notes
-
-**Kick Chat Implementation:**
-This uses a vanilla Pusher WebSocket implementation for browser compatibility. The [@retconned/kick-js](https://github.com/retconned/kick-js) library exists but is Node.js-only and won't work in browsers/OBS.
 
 ## Troubleshooting
 
