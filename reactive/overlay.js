@@ -228,6 +228,29 @@ export class ReactiveOverlay extends BaseOverlay {
     const freeze = document.createElement('div');
     freeze.className = 'freeze-overlay';
 
+    // Add scattered ice crystals around the edges
+    const crystalPositions = [
+      { left: '5%', top: '10%' },
+      { left: '15%', top: '5%' },
+      { right: '8%', top: '12%' },
+      { right: '18%', top: '6%' },
+      { left: '10%', bottom: '8%' },
+      { left: '20%', bottom: '15%' },
+      { right: '12%', bottom: '10%' },
+      { right: '5%', bottom: '18%' },
+      { left: '50%', top: '3%' },
+      { left: '50%', bottom: '3%' }
+    ];
+
+    crystalPositions.forEach((pos, index) => {
+      const crystal = document.createElement('div');
+      crystal.className = 'ice-crystal';
+      crystal.textContent = '❄';
+      Object.assign(crystal.style, pos);
+      crystal.style.animationDelay = `${index * 0.2}s`;
+      freeze.appendChild(crystal);
+    });
+
     this.container.appendChild(freeze);
 
     // Remove after 5 seconds
