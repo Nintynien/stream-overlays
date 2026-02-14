@@ -174,6 +174,45 @@ body {
   opacity: 0.8;
 }
 
+.scales-celebration {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.scales-celebration.visible {
+  opacity: 1;
+}
+
+.scales-winner {
+  position: absolute;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 18px;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+  text-shadow: 0 0 10px rgba(255, 255, 255, 0.7);
+  animation: winner-burst 3.2s ease-out forwards;
+}
+
+@keyframes winner-burst {
+  0% {
+    transform: scale(0.6) translateY(10px);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.05) translateY(-40px);
+    opacity: 0;
+  }
+}
+
 /* Debug info (optional) */
 #debug-info {
   position: fixed;

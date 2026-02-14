@@ -17,6 +17,7 @@ export class ScalesOverlay extends BaseOverlay {
       bigJumpMinMs: config.settings?.bigJumpMinMs ?? 15000,
       bigJumpMaxMs: config.settings?.bigJumpMaxMs ?? 20000,
       tickMs: config.settings?.tickMs ?? 100,
+      maxWinnerNames: config.settings?.maxWinnerNames ?? 30,
     };
 
     this.balance = 0;
@@ -29,8 +30,8 @@ export class ScalesOverlay extends BaseOverlay {
     this.activeBigJumpCommand = null;
     this.lastBigJumpBy = null;
 
-    this.leftTriggers = new Set(['UR', 'LEFT', 'L', '1']);
-    this.rightTriggers = new Set(['WE', 'APRIL', 'CUFFEM', 'RIGHT', 'R', '2']);
+    this.leftTriggers = new Set(['LEFT', 'L', '1']);
+    this.rightTriggers = new Set(['RIGHT', 'R', '2']);
     this.bigJumpCommands = ['!SLAM', '!JUMP', '!SMASH', '!CRASH', '!THUMP', '!BOOM'];
     this.lastSideByUser = new Map();
 
@@ -114,6 +115,7 @@ export class ScalesOverlay extends BaseOverlay {
       </div>
       <div class="scales-big-jump" id="scales-big-jump"></div>
       <div class="scales-score" id="scales-score">Balance: 0</div>
+      <div class="scales-celebration" id="scales-celebration"></div>
     `;
 
     this.container.appendChild(root);
@@ -125,7 +127,8 @@ export class ScalesOverlay extends BaseOverlay {
       meterIndicator: root.querySelector('#scales-meter-indicator'),
       beam: root.querySelector('#scales-beam'),
       bigJump: root.querySelector('#scales-big-jump'),
-      score: root.querySelector('#scales-score')
+      score: root.querySelector('#scales-score'),
+      celebration: root.querySelector('#scales-celebration')
     };
   }
 
@@ -210,13 +213,17 @@ export class ScalesOverlay extends BaseOverlay {
     let statusMessage = 'Game over!';
     if (reason === 'left') {
       statusMessage = 'Left side wins! Ground touched.';
+      this.celebrateWinners('left');
     } else if (reason === 'right') {
       statusMessage = 'Right side wins! Ground touched.';
+      this.celebrateWinners('right');
     } else if (reason === 'time') {
       if (this.balance > 0) {
         statusMessage = 'Time! Right side wins on advantage.';
+        this.celebrateWinners('right');
       } else if (this.balance < 0) {
         statusMessage = 'Time! Left side wins on advantage.';
+        this.celebrateWinners('left');
       } else {
         statusMessage = 'Time! It is a draw.';
       }
@@ -252,6 +259,38 @@ export class ScalesOverlay extends BaseOverlay {
   updateBigJumpPrompt() {
     if (this.activeBigJumpCommand) return;
     this.ui.bigJump.textContent = 'Push the scales: type LEFT or RIGHT (L / R)';
+  }
+
+  celebrateWinners(side) {
+    if (!this.ui.celebration) return;
+
+    const winners = [];
+    for (const [username, userSide] of this.lastSideByUser.entries()) {
+      if (userSide === side) winners.push(username);
+    }
+
+    if (winners.length === 0) {
+      this.ui.celebration.textContent = 'No winners recorded.';
+      this.ui.celebration.classList.add('visible');
+      return;
+    }
+
+    const uniqueWinners = Array.from(new Set(winners));
+    const shuffled = uniqueWinners.sort(() => Math.random() - 0.5);
+    const limited = shuffled.slice(0, this.settings.maxWinnerNames);
+
+    this.ui.celebration.innerHTML = '';
+    this.ui.celebration.classList.add('visible');
+
+    limited.forEach(name => {
+      const burst = document.createElement('div');
+      burst.className = 'scales-winner';
+      burst.textContent = name;
+      burst.style.left = `${10 + Math.random() * 80}%`;
+      burst.style.top = `${10 + Math.random() * 70}%`;
+      burst.style.animationDelay = `${Math.random() * 3}s`;
+      this.ui.celebration.appendChild(burst);
+    });
   }
 
   updateUI() {
