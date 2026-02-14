@@ -79,6 +79,35 @@ file:///C:/path/to/stream-overlays/matrix/index.html?twitch=your_channel
 - Katakana and Latin characters
 - Adjustable speed and density
 
+### Scales
+
+Tip the Scales - a 90 second tug-of-war where chat tips a seesaw.
+
+**URL:**
+```
+file:///C:/path/to/stream-overlays/scales/index.html?twitch=your_channel
+```
+
+**URL Parameters:**
+- `twitch=channel_name` - Twitch channel to connect to
+- `kick=channel_name` - Kick channel to connect to
+- `debug=true` - Show debug info overlay
+- `duration=90000` - Match length in ms (default: 90000)
+- `gravity=5` - Drift back to center per second (default: 5)
+- `voteWeight=1` - Weight per vote (default: 1)
+- `bigJumpWeight=50` - Weight for the big jump (default: 50)
+- `bigJumpMin=15000` - Minimum ms between big jumps (default: 15000)
+- `bigJumpMax=20000` - Maximum ms between big jumps (default: 20000)
+
+**Commands:**
+- Left: `left`, `l`, or `1`
+- Right: `right`, `r`, or `2`
+- Big jump: a rotating command appears (e.g. `!SLAM`) and the first chatter to use it slams their current side.
+
+**Win Conditions:**
+- Touching the ground (balance <= -100 or >= 100) ends the match instantly
+- Time runs out after 90 seconds; the side with the advantage wins
+
 ## Creating Custom Overlays
 
 ### 1. Create Your Overlay Class
