@@ -130,8 +130,15 @@ export class KickClient extends ChatClient {
           'kick',
           messageData.sender?.username || 'Anonymous',
           messageData.content,
-          messageData.sender?.identity?.color || null
+          messageData.sender?.identity?.color || null,
+          messageData.sender?.identity?.badges?.some(
+            badge => badge.type === 'subscriber'
+          ),
+          messageData.sender?.identity?.badges?.some(
+            badge => badge.type === 'moderator'
+          ),
         );
+        // console.log(messageData)
 
         this.emit('message', standardMessage);
         return;

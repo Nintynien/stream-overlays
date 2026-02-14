@@ -23,12 +23,14 @@ export class ChatClient extends EventEmitter {
    * Standardized message format
    * @returns {Object} { platform, username, message, color, timestamp }
    */
-  _createMessage(platform, username, message, color = null) {
+  _createMessage(platform, username, message, color = null, subscriber = false, moderator = false) {
     return {
       platform,
       username,
       message,
       color,
+      subscriber,
+      moderator,
       timestamp: Date.now()
     };
   }

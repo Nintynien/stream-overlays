@@ -108,6 +108,20 @@ file:///C:/path/to/stream-overlays/scales/index.html?twitch=your_channel
 - Touching the ground (balance <= -100 or >= 100) ends the match instantly
 - Time runs out after 90 seconds; the side with the advantage wins
 
+### Reactive
+
+Placeholder overlay with no visuals or chat behavior yet.
+
+**URL:**
+```
+file:///C:/path/to/stream-overlays/reactive/index.html?twitch=your_channel
+```
+
+**URL Parameters:**
+- `twitch=channel_name` - Twitch channel to connect to
+- `kick=channel_name` - Kick channel to connect to
+- `debug=true` - Show debug info overlay
+
 ## Creating Custom Overlays
 
 ### 1. Create Your Overlay Class
