@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Matrix Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="overlay-container"></div>
+
+  <!-- Optional debug info -->
+  <div id="debug-info">
+    <div>Status: <span id="status">Initializing...</span></div>
+    <div>Messages: <span id="message-count">0</span></div>
+  </div>
+
+  <script type="module">
+    import { MatrixOverlay } from './overlay.js';
+
+    // Initialize overlay
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+
+      const config = {
+        twitch: {
+          enabled: !!params.get('twitch'),
+          channel: params.get('twitch') || ''
+        },
+        kick: {
+          enabled: !!params.get('kick'),
+          channel: params.get('kick') || ''
+        },
+        settings: {
+          // Parse URL parameters, let overlay.js handle defaults
+          fontSize: params.get('fontSize') ? parseInt(params.get('fontSize')) : undefined,
+          speed: params.get('speed') ? parseInt(params.get('speed')) : undefined,
+          columnWidth: params.get('columnWidth') ? parseInt(params.get('columnWidth')) : undefined
+        }
+      };
+
+      const overlay = new MatrixOverlay(config);
+
+      // Optional: debug info
+      const debugInfo = document.getElementById('debug-info');
+      const statusEl = document.getElementById('status');
+      const messageCountEl = document.getElementById('message-count');
+      let messageCount = 0;
+
+      // Show debug info if ?debug=true in URL
+      if (params.get('debug') === 'true') {
+        debugInfo.classList.add('visible');
+      }
+
+      // Override onMessage to update debug info
+      const originalOnMessage = overlay.onMessage.bind(overlay);
+      overlay.onMessage = function(message) {
+        originalOnMessage(message);
+        messageCount++;
+        messageCountEl.textContent = messageCount;
+      };
+
+      await overlay.init();
+      statusEl.textContent = 'Connected';
+
+      // Make overlay accessible for debugging
+      window.overlay = overlay;
+    }
+
+    init().catch(error => {
+      console.error('Failed to initialize overlay:', error);
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+    });
+  </script>
+</body>
+</html>
