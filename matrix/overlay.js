@@ -12,6 +12,8 @@ export class MatrixOverlay extends BaseOverlay {
       fontSize: config.settings?.fontSize || 32,
       speed: config.settings?.speed || 50, // ms per frame
       columnWidth: config.settings?.columnWidth || 48,
+      // Multiply column speed when displaying a message (0.5 = half speed)
+      messageSpeedMultiplier: config.settings?.messageSpeedMultiplier ?? 0.25,
     };
 
     this.columns = [];
@@ -65,7 +67,10 @@ export class MatrixOverlay extends BaseOverlay {
   update() {
     this.columns.forEach(column => {
       // Move column down
-      column.y += column.speed;
+      const messageSpeedMultiplier = column.usingMessage
+        ? this.settings.messageSpeedMultiplier
+        : 1;
+      column.y += column.speed * messageSpeedMultiplier;
 
       // Reset column when it goes off screen
       const maxY = window.innerHeight / this.settings.fontSize;
