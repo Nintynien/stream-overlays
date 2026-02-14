@@ -116,80 +116,117 @@ body {
 }
 
 /* Bomb */
-.bomb {
+.bomb-wrapper {
   position: absolute;
   width: 60px;
   height: 60px;
-  transition: top 1.5s cubic-bezier(0.5, 0, 0.5, 1), transform 1.5s ease-out;
+  pointer-events: none;
+  transform-origin: center center;
+}
+
+.bomb-ball {
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  background: radial-gradient(circle at 30% 30%, #333, #000);
+  border-radius: 50%;
+  box-shadow:
+    inset -15px -15px 20px rgba(255, 255, 255, 0.1),
+    5px 10px 20px rgba(0, 0, 0, 0.5);
+}
+
+.bomb-spark {
+  position: absolute;
+  top: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 14px;
+  background: radial-gradient(circle, #FFA500, #FF6B00);
+  border-radius: 50%;
+  box-shadow: 0 0 15px #FFA500, 0 0 25px #FF6B00;
+  animation: sparkle 0.3s ease-in-out infinite alternate;
+  z-index: 10;
+}
+
+@keyframes sparkle {
+  from {
+    transform: translateX(-50%) scale(0.8);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateX(-50%) scale(1.2);
+    opacity: 1;
+  }
+}
+
+/* Explosion */
+.explosion-container {
+  position: fixed;
+  width: 400px;
+  height: 400px;
+  transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
-.bomb-body {
+.boom-text {
   position: absolute;
-  width: 50px;
-  height: 50px;
-  background: #000;
-  border-radius: 50%;
-  bottom: 0;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
-  box-shadow: inset -10px -10px 10px rgba(255, 255, 255, 0.2);
+  transform: translate(-50%, -50%);
+  font-size: 100px;
+  font-weight: bold;
+  color: #FF4500;
+  text-shadow:
+    0 0 20px #FFD700,
+    0 0 40px #FF6B00,
+    0 0 60px #FF0000,
+    5px 5px 0 #000,
+    -5px -5px 0 #000,
+    5px -5px 0 #000,
+    -5px 5px 0 #000;
+  animation: boomAppear 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  font-family: Impact, 'Arial Black', sans-serif;
+  letter-spacing: 10px;
+  z-index: 1000;
+  white-space: nowrap;
 }
 
-.bomb-fuse {
-  position: absolute;
-  top: -20px;
-  left: 50%;
-  width: 3px;
-  height: 25px;
-  background: #8B4513;
-  transform: translateX(-50%);
-}
-
-.bomb-fuse::before {
-  content: '';
-  position: absolute;
-  top: -5px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 8px;
-  height: 8px;
-  background: #FFA500;
-  border-radius: 50%;
-  animation: fuseBurn 3s linear;
-}
-
-@keyframes fuseBurn {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 10px #FFA500;
+@keyframes boomAppear {
+  0% {
+    transform: translate(-50%, -50%) scale(0) rotate(-30deg);
+    opacity: 0;
   }
   50% {
-    opacity: 0.5;
-    box-shadow: 0 0 20px #FFA500;
+    transform: translate(-50%, -50%) scale(1.4) rotate(10deg);
   }
-}
-
-.bomb.exploding .bomb-body,
-.bomb.exploding .bomb-fuse {
-  opacity: 0;
+  100% {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+    opacity: 1;
+  }
 }
 
 .explosion-particle {
   position: absolute;
-  width: 8px;
-  height: 8px;
+  top: 50%;
+  left: 50%;
   border-radius: 50%;
-  animation: explode 1s ease-out forwards;
+  box-shadow: 0 0 15px currentColor;
+  animation: explodeParticle 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards;
 }
 
-@keyframes explode {
+@keyframes explodeParticle {
   0% {
-    transform: translate(-50%, -50%) scale(1);
+    transform: translate(-50%, -50%) translate(0, 0) scale(1);
     opacity: 1;
   }
   100% {
-    transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0);
+    transform: translate(-50%, -50%)
+      translate(
+        calc(cos(var(--angle)) * var(--speed)),
+        calc(sin(var(--angle)) * var(--speed))
+      )
+      scale(0);
     opacity: 0;
   }
 }

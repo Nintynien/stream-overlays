@@ -155,48 +155,85 @@ export class ReactiveOverlay extends BaseOverlay {
   triggerBomb() {
     console.log('[Reactive] Triggering bomb');
 
+    // Calculate positions
+    const dropX = 20 + Math.random() * 60; // 20-80% of screen
+    const finalY = window.innerHeight - 100; // 100px from bottom
+
+    // Create bomb wrapper
+    const bombWrapper = document.createElement('div');
+    bombWrapper.className = 'bomb-wrapper';
+    bombWrapper.style.left = `${dropX}%`;
+    bombWrapper.style.top = `-100px`;
+
+    // Create bomb
     const bomb = document.createElement('div');
-    bomb.className = 'bomb';
-    bomb.style.left = `${Math.random() * 80 + 10}%`;
-    bomb.style.top = '-100px';
+    bomb.className = 'bomb-ball';
 
-    // Fuse
-    const fuse = document.createElement('div');
-    fuse.className = 'bomb-fuse';
-    bomb.appendChild(fuse);
+    // Create fuse spark
+    const spark = document.createElement('div');
+    spark.className = 'bomb-spark';
 
-    // Body
-    const body = document.createElement('div');
-    body.className = 'bomb-body';
-    bomb.appendChild(body);
+    bombWrapper.appendChild(spark);
+    bombWrapper.appendChild(bomb);
+    this.container.appendChild(bombWrapper);
 
-    this.container.appendChild(bomb);
-
-    // Drop and roll
+    // Animate drop with physics
+    bombWrapper.style.transition = 'top 1.2s cubic-bezier(0.5, 0, 0.7, 1), transform 1.2s ease-out';
     setTimeout(() => {
-      bomb.style.top = '60%';
-      bomb.style.transform = 'rotate(720deg)';
-    }, 10);
+      bombWrapper.style.top = `${finalY}px`;
+      bombWrapper.style.transform = 'rotate(720deg)';
+    }, 50);
 
-    // Explode after 3 seconds
+    // Bounce and settle
     setTimeout(() => {
-      bomb.classList.add('exploding');
+      bombWrapper.style.transition = 'top 0.3s cubic-bezier(0.3, 0, 0.7, 1)';
+      bombWrapper.style.top = `${finalY - 30}px`;
+    }, 1250);
 
-      // Create explosion particles
-      for (let i = 0; i < 40; i++) {
+    setTimeout(() => {
+      bombWrapper.style.transition = 'top 0.2s ease-out';
+      bombWrapper.style.top = `${finalY}px`;
+    }, 1550);
+
+    // Explode
+    setTimeout(() => {
+      const bombRect = bombWrapper.getBoundingClientRect();
+      const explodeX = bombRect.left + bombRect.width / 2;
+      const explodeY = bombRect.top + bombRect.height / 2;
+
+      // Remove bomb
+      bombWrapper.remove();
+
+      // Create explosion container
+      const explosion = document.createElement('div');
+      explosion.className = 'explosion-container';
+      explosion.style.left = `${explodeX}px`;
+      explosion.style.top = `${explodeY}px`;
+
+      // BOOM text
+      const boom = document.createElement('div');
+      boom.className = 'boom-text';
+      boom.textContent = 'BOOM!';
+      explosion.appendChild(boom);
+
+      // Explosion particles
+      for (let i = 0; i < 50; i++) {
         const particle = document.createElement('div');
         particle.className = 'explosion-particle';
-        const angle = (i / 40) * Math.PI * 2;
-        const distance = 100 + Math.random() * 100;
-        particle.style.left = '50%';
-        particle.style.top = '50%';
-        particle.style.setProperty('--tx', `${Math.cos(angle) * distance}px`);
-        particle.style.setProperty('--ty', `${Math.sin(angle) * distance}px`);
-        particle.style.backgroundColor = ['#FF6B00', '#FF0000', '#FFD700', '#FF4500'][Math.floor(Math.random() * 4)];
-        bomb.appendChild(particle);
+        const angle = (i / 50) * Math.PI * 2;
+        const speed = 100 + Math.random() * 120;
+        particle.style.setProperty('--angle', `${angle}rad`);
+        particle.style.setProperty('--speed', `${speed}px`);
+        particle.style.width = `${10 + Math.random() * 10}px`;
+        particle.style.height = particle.style.width;
+        particle.style.backgroundColor = ['#FF6B00', '#FF0000', '#FFD700', '#FF4500', '#FFAA00'][Math.floor(Math.random() * 5)];
+        explosion.appendChild(particle);
       }
 
-      setTimeout(() => bomb.remove(), 1500);
+      this.container.appendChild(explosion);
+
+      // Remove explosion after animation
+      setTimeout(() => explosion.remove(), 1500);
     }, 3000);
   }
 
