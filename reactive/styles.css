@@ -375,6 +375,71 @@ body {
   }
 }
 
+/* Heart Explosion */
+.giant-heart {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 0px;
+  color: #FF1744;
+  text-shadow: 0 0 30px rgba(255, 23, 68, 0.8);
+  animation: heartGrowPulse 2s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+@keyframes heartGrowPulse {
+  0% {
+    font-size: 0px;
+    opacity: 0;
+  }
+  40% {
+    font-size: 300px;
+    opacity: 1;
+  }
+  55% {
+    font-size: 280px;
+  }
+  70% {
+    font-size: 300px;
+  }
+  85% {
+    font-size: 280px;
+  }
+  100% {
+    font-size: 300px;
+    opacity: 1;
+  }
+}
+
+.tiny-heart {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  font-size: 16px;
+  color: #FF1744;
+  animation: heartBurst 1s ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes heartBurst {
+  0% {
+    transform: translate(-50%, -50%) translate(0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -50%)
+      translate(
+        calc(cos(var(--angle)) * var(--distance)),
+        calc(sin(var(--angle)) * var(--distance))
+      )
+      rotate(var(--rotation))
+      scale(0.5);
+    opacity: 0;
+  }
+}
+
 /* Debug info (optional) */
 #debug-info {
   position: fixed;

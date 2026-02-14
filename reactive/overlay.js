@@ -15,8 +15,12 @@ export class ReactiveOverlay extends BaseOverlay {
       confetti: { duration: 15000, lastTrigger: 0 },
       fireworks: { duration: 120000, lastTrigger: 0 },
       snow: { duration: 10000, lastTrigger: 0 },
-      freeze: { duration: 300000, lastTrigger: 0 }
+      freeze: { duration: 300000, lastTrigger: 0 },
+      heartExplosion: { duration: 15000, lastTrigger: 0 }
     };
+
+    // Heart emoji tracking (for heart explosion trigger)
+    this.heartEmojiTracking = [];
   }
 
   onInit() {
@@ -66,6 +70,27 @@ export class ReactiveOverlay extends BaseOverlay {
       if (this.checkCooldown('freeze', now)) {
         this.triggerFreeze();
         this.cooldowns.freeze.lastTrigger = now;
+      }
+    }
+
+    // Heart Explosion - triggers on 20 heart emojis within 5 seconds
+    const heartEmojiCount = this.detectHeartEmojis(text);
+    if (heartEmojiCount > 0) {
+      // Add timestamps for each heart emoji detected
+      for (let i = 0; i < heartEmojiCount; i++) {
+        this.heartEmojiTracking.push(now);
+      }
+
+      // Clean up old timestamps (older than 5 seconds)
+      this.heartEmojiTracking = this.heartEmojiTracking.filter(timestamp => now - timestamp <= 5000);
+
+      // Check if we have 20+ heart emojis in the last 5 seconds
+      if (this.heartEmojiTracking.length >= 20) {
+        if (this.checkCooldown('heartExplosion', now)) {
+          this.triggerHeartExplosion();
+          this.cooldowns.heartExplosion.lastTrigger = now;
+          this.heartEmojiTracking = []; // Reset tracking after trigger
+        }
       }
     }
   }
@@ -295,6 +320,62 @@ export class ReactiveOverlay extends BaseOverlay {
       freeze.classList.add('fade-out');
       setTimeout(() => freeze.remove(), 1000);
     }, 5000);
+  }
+
+  detectHeartEmojis(text) {
+    let count = 0;
+
+    const emoteRegex = /\[emote:(\d+):([^\]]+)\]/g;
+    let match;
+    while ((match = emoteRegex.exec(text)) !== null) {
+      if (match[2].includes('heart')) {
+        count++;
+      }
+    }
+
+    // Also check for actual heart emoji characters
+    const heartEmojiMatches = text.match(/❤|♥|💕|💖|💗|💓|💞|💝|🖤|🤍|🤎|💜|💚|💛|🧡/g);
+    if (heartEmojiMatches) {
+      count += heartEmojiMatches.length;
+    }
+
+    return count;
+  }
+
+  triggerHeartExplosion() {
+    console.log('[Reactive] Triggering heart explosion');
+
+    // Create giant heart in center
+    const giantHeart = document.createElement('div');
+    giantHeart.className = 'giant-heart';
+    giantHeart.textContent = '❤';
+
+    this.container.appendChild(giantHeart);
+
+    // After pulse animation (2 seconds), burst into tiny hearts
+    setTimeout(() => {
+      giantHeart.remove();
+
+      // Create hundreds of tiny hearts
+      const count = 200;
+      for (let i = 0; i < count; i++) {
+        const tinyHeart = document.createElement('div');
+        tinyHeart.className = 'tiny-heart';
+        tinyHeart.textContent = '❤';
+
+        // Random angle for burst
+        const angle = (i / count) * Math.PI * 2;
+        const distance = 50 + Math.random() * 500;
+        tinyHeart.style.setProperty('--angle', `${angle}rad`);
+        tinyHeart.style.setProperty('--distance', `${distance}px`);
+        tinyHeart.style.setProperty('--rotation', `${Math.random() * 720 - 360}deg`);
+
+        this.container.appendChild(tinyHeart);
+
+        // Remove after 1 second
+        setTimeout(() => tinyHeart.remove(), 1000);
+      }
+    }, 2000);
   }
 
   randomColor() {
