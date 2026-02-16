@@ -52,7 +52,8 @@ export class TwitchClient extends ChatClient {
     const lines = rawMessage.split('\r\n').filter(line => line.length > 0);
 
     lines.forEach(line => {
-      console.log('[TWITCH] ' + line);
+      // console.log('[TWITCH] ' + line);
+      
       // Handle PING
       if (line.startsWith('PING')) {
         this.ws.send('PONG :tmi.twitch.tv');
