@@ -65,8 +65,8 @@ export function extractAllEmojis(message) {
     });
   }
 
-  // Use pre-parsed emotes from Twitch IRC tags
-  if (message.platform === 'twitch' && message.emotes?.length > 0) {
+  // Use pre-parsed emotes (Twitch native, 7TV, etc.)
+  if (message.emotes?.length > 0) {
     message.emotes.forEach(emote => {
       results.push({
         type: 'emote',

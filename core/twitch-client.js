@@ -8,6 +8,7 @@ export class TwitchClient extends ChatClient {
     super(config);
     this.ws = null;
     this.channel = config.channel;
+    this.roomId = null;
   }
 
   connect() {
@@ -56,6 +57,15 @@ export class TwitchClient extends ChatClient {
       if (line.startsWith('PING')) {
         this.ws.send('PONG :tmi.twitch.tv');
         return;
+      }
+
+      // Parse ROOMSTATE to get channel/room ID
+      if (line.includes('ROOMSTATE') && !this.roomId) {
+        const roomIdMatch = line.match(/room-id=(\d+)/);
+        if (roomIdMatch) {
+          this.roomId = roomIdMatch[1];
+          this.emit('roomid', this.roomId);
+        }
       }
 
       // Parse PRIVMSG (chat messages)

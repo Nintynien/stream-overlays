@@ -12,6 +12,7 @@ export class KickClient extends ChatClient {
     this.ws = null;
     this.channelId = config.channelId;
     this.channelName = config.channelName || config.channel;
+    this.userId = null;
     this.pusherConfig = null;
   }
 
@@ -158,6 +159,9 @@ export class KickClient extends ChatClient {
     }
 
     const data = await response.json();
+
+    // Store user ID for external services (e.g. 7TV)
+    this.userId = data.user_id || data.id;
 
     // Kick has both channel.id and chatroom.id - we need chatroom.id
     const chatroomId = data.chatroom?.id || data.id;
