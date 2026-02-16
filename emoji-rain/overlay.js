@@ -20,7 +20,7 @@ export class EmojiRainOverlay extends BaseOverlay {
   }
 
   onMessage(message) {
-    const emojis = extractAllEmojis(message.message, message.platform);
+    const emojis = extractAllEmojis(message);
     if (emojis.length > 0) {
       emojis.forEach(emoji => {
         this.spawnFallingEmoji(emoji);

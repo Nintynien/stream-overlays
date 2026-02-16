@@ -51,6 +51,7 @@ export class TwitchClient extends ChatClient {
     const lines = rawMessage.split('\r\n').filter(line => line.length > 0);
 
     lines.forEach(line => {
+      console.log('[TWITCH] ' + line);
       // Handle PING
       if (line.startsWith('PING')) {
         this.ws.send('PONG :tmi.twitch.tv');
@@ -65,8 +66,11 @@ export class TwitchClient extends ChatClient {
             'twitch',
             message.username,
             message.message,
-            message.color
+            message.color,
+            message.subscriber,
+            message.mod
           );
+          standardMessage.emotes = message.emotes;
           this.emit('message', standardMessage);
         }
       }
@@ -85,11 +89,41 @@ export class TwitchClient extends ChatClient {
       color = colorMatch[1];
     }
 
+    // Extract mod and subscriber status from tags
+    const mod = /;mod=1[;\s]/.test(line);
+    const subscriber = /;subscriber=1[;\s]/.test(line);
+
+    // Extract emotes from tags (format: emotes=id:start-end,start-end/id:start-end)
+    const emotes = [];
+    const emotesMatch = line.match(/emotes=([^;\s]+)/);
+    if (emotesMatch && emotesMatch[1]) {
+      const emotesStr = emotesMatch[1];
+      if (emotesStr.length > 0) {
+        emotesStr.split('/').forEach(emoteEntry => {
+          const [id, positions] = emoteEntry.split(':');
+          if (id && positions) {
+            positions.split(',').forEach(pos => {
+              const [start, end] = pos.split('-').map(Number);
+              emotes.push({ id, start, end });
+            });
+          }
+        });
+      }
+    }
+
     if (messageMatch && userMatch) {
+      const text = messageMatch[1];
       return {
         username: userMatch[1],
-        message: messageMatch[1],
-        color: color
+        message: text,
+        color: color,
+        mod: mod,
+        subscriber: subscriber,
+        emotes: emotes.map(e => ({
+          id: e.id,
+          name: text.substring(e.start, e.end + 1),
+          url: `https://static-cdn.jtvnw.net/emoticons/v2/${e.id}/default/dark/3.0`
+        }))
       };
     }
     return null;

@@ -37,29 +37,46 @@ export function extractKickEmotes(text) {
 }
 
 /**
- * Extract all emojis and emotes from text (both Unicode and Kick custom)
- * @param {string} text - The text to parse
- * @param {string} platform - Platform ('twitch', 'kick', etc.)
+ * Extract all emojis and emotes from a chat message
+ * @param {Object} message - Standardized chat message object
+ * @param {string} message.message - The message text
+ * @param {string} message.platform - Platform ('twitch', 'kick', etc.)
+ * @param {Array<{id: string, name: string, url: string}>} [message.emotes] - Pre-parsed emotes (e.g. from Twitch IRC tags)
  * @returns {Array<{type: 'emoji'|'emote', content: string, url?: string}>} Array of emojis/emotes
  */
-export function extractAllEmojis(text, platform = 'unknown') {
+export function extractAllEmojis(message) {
   const results = [];
 
   // Extract Unicode emojis
-  const unicodeEmojis = extractEmojis(text);
+  const unicodeEmojis = extractEmojis(message.message);
   unicodeEmojis.forEach(emoji => {
     results.push({ type: 'emoji', content: emoji });
   });
 
-  // Extract Kick custom emotes if platform is Kick
-  if (platform === 'kick') {
-    const kickEmotes = extractKickEmotes(text);
+  // Extract Kick custom emotes
+  if (message.platform === 'kick') {
+    const kickEmotes = extractKickEmotes(message.message);
     kickEmotes.forEach(emote => {
       results.push({
         type: 'emote',
         content: emote.name,
         url: emote.url
       });
+    });
+  }
+
+  // Use pre-parsed emotes from Twitch IRC tags (deduplicated by ID)
+  if (message.platform === 'twitch' && message.emotes?.length > 0) {
+    const seen = new Set();
+    message.emotes.forEach(emote => {
+      if (!seen.has(emote.id)) {
+        seen.add(emote.id);
+        results.push({
+          type: 'emote',
+          content: emote.name,
+          url: emote.url
+        });
+      }
     });
   }
 
