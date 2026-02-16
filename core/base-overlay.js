@@ -29,7 +29,8 @@ export class BaseOverlay {
 
     if (this.config.twitch?.enabled && this.config.twitch?.channel) {
       const twitchClient = new TwitchClient({
-        channel: this.config.twitch.channel
+        channel: this.config.twitch.channel,
+        debug: this.config.debug
       });
 
       twitchClient.on('message', (msg) => this.onMessage(msg));
@@ -43,7 +44,8 @@ export class BaseOverlay {
     if (this.config.kick?.enabled && (this.config.kick?.channelId || this.config.kick?.channel)) {
       const kickClient = new KickClient({
         channelId: this.config.kick.channelId,
-        channelName: this.config.kick.channel
+        channelName: this.config.kick.channel,
+        debug: this.config.debug
       });
 
       kickClient.on('message', (msg) => this.onMessage(msg));

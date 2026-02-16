@@ -23,6 +23,7 @@
       const params = new URLSearchParams(window.location.search);
 
       const config = {
+        debug: params.get('debug') === 'true',
         twitch: {
           enabled: !!params.get('twitch'),
           channel: params.get('twitch') || ''

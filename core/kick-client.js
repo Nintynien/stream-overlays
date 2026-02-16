@@ -93,6 +93,7 @@ export class KickClient extends ChatClient {
   _handleMessage(rawMessage) {
     try {
       const data = JSON.parse(rawMessage);
+      this._log('[Kick]', data.event, data.data);
 
       // Connection established
       if (data.event === 'pusher:connection_established') {
@@ -139,8 +140,6 @@ export class KickClient extends ChatClient {
             badge => badge.type === 'moderator'
           ),
         );
-        // console.log(messageData)
-
         this.emit('message', standardMessage);
         return;
       }

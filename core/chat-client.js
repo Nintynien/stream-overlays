@@ -9,6 +9,13 @@ export class ChatClient extends EventEmitter {
     super();
     this.config = config;
     this.connected = false;
+    this.debug = config.debug || false;
+  }
+
+  _log(...args) {
+    if (this.debug) {
+      console.log(...args);
+    }
   }
 
   connect() {
