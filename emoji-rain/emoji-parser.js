@@ -65,18 +65,14 @@ export function extractAllEmojis(message) {
     });
   }
 
-  // Use pre-parsed emotes from Twitch IRC tags (deduplicated by ID)
+  // Use pre-parsed emotes from Twitch IRC tags
   if (message.platform === 'twitch' && message.emotes?.length > 0) {
-    const seen = new Set();
     message.emotes.forEach(emote => {
-      if (!seen.has(emote.id)) {
-        seen.add(emote.id);
-        results.push({
-          type: 'emote',
-          content: emote.name,
-          url: emote.url
-        });
-      }
+      results.push({
+        type: 'emote',
+        content: emote.name,
+        url: emote.url
+      });
     });
   }
 
