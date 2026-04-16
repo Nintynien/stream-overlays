@@ -10,7 +10,7 @@ export class QuizOverlay extends BaseOverlay {
     this.settings = {
       questionCount: config.settings?.questionCount ?? 10,
       timePerQuestion: config.settings?.timePerQuestion ?? 20000,
-      pauseBetween: config.settings?.pauseBetween ?? 5000,
+      pauseBetween: config.settings?.pauseBetween ?? 2000,
       category: config.settings?.category ?? null,
       difficulty: config.settings?.difficulty ?? null,
       tickMs: 100,
