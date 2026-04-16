@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quiz Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="overlay-container"></div>
+
+  <!-- Optional debug info -->
+  <div id="debug-info">
+    <div>Status: <span id="status">Initializing...</span></div>
+    <div>Messages: <span id="message-count">0</span></div>
+  </div>
+
+  <script type="module">
+    import { QuizOverlay } from './overlay.js';
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+
+      const config = {
+        twitch: {
+          enabled: !!params.get('twitch'),
+          channel: params.get('twitch') || ''
+        },
+        kick: {
+          enabled: !!params.get('kick'),
+          channel: params.get('kick') || ''
+        },
+        settings: {
+          questionCount: params.get('questions') ? parseInt(params.get('questions')) : undefined,
+          timePerQuestion: params.get('time') ? parseInt(params.get('time')) : undefined,
+          pauseBetween: params.get('pause') ? parseInt(params.get('pause')) : undefined,
+          category: params.get('category') ? parseInt(params.get('category')) : undefined,
+          difficulty: params.get('difficulty') || undefined,
+        }
+      };
+
+      const overlay = new QuizOverlay(config);
+
+      // Optional: debug info
+      const debugInfo = document.getElementById('debug-info');
+      const statusEl = document.getElementById('status');
+      const messageCountEl = document.getElementById('message-count');
+      let messageCount = 0;
+
+      if (params.get('debug') === 'true') {
+        debugInfo.classList.add('visible');
+      }
+
+      const originalOnMessage = overlay.onMessage.bind(overlay);
+      overlay.onMessage = function(message) {
+        originalOnMessage(message);
+        messageCount++;
+        messageCountEl.textContent = messageCount;
+      };
+
+      await overlay.init();
+      statusEl.textContent = 'Connected';
+
+      window.overlay = overlay;
+    }
+
+    init().catch(error => {
+      console.error('Failed to initialize overlay:', error);
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+    });
+  </script>
+</body>
+</html>
