@@ -1,0 +1,310 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #ffffff;
+}
+
+/* ── Root Container ── */
+
+.wordle-root {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.85);
+  border-radius: 16px;
+  padding: 24px 32px;
+  min-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+/* ── Header ── */
+
+.wordle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.wordle-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: 4px;
+}
+
+.wordle-round {
+  font-size: 16px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+/* ── Status ── */
+
+.wordle-status {
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  min-height: 22px;
+  opacity: 0.9;
+}
+
+.game-won .wordle-status {
+  color: #538d4e;
+  font-size: 20px;
+  font-weight: 700;
+  animation: status-glow 1.5s ease-in-out infinite alternate;
+}
+
+.game-lost .wordle-status {
+  color: #b5543b;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+@keyframes status-glow {
+  from { text-shadow: 0 0 8px rgba(83, 141, 78, 0.5); }
+  to { text-shadow: 0 0 20px rgba(83, 141, 78, 0.9); }
+}
+
+/* ── Grid ── */
+
+.wordle-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wordle-row {
+  display: flex;
+  gap: 6px;
+}
+
+/* ── Tiles ── */
+
+.wordle-tile {
+  width: 62px;
+  height: 62px;
+  perspective: 500px;
+}
+
+.wordle-tile-inner {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s ease-in-out;
+}
+
+.wordle-tile.reveal .wordle-tile-inner {
+  transform: rotateX(180deg);
+}
+
+.wordle-tile-front,
+.wordle-tile-back {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  text-transform: uppercase;
+  border-radius: 4px;
+}
+
+.wordle-tile-front {
+  background: transparent;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+}
+
+.wordle-tile.preview .wordle-tile-front {
+  color: rgba(255, 255, 255, 0.35);
+  border-color: rgba(255, 255, 255, 0.3);
+  animation: tile-pop 0.2s ease-out;
+}
+
+.wordle-tile-back {
+  transform: rotateX(180deg);
+  border: 2px solid transparent;
+  color: #ffffff;
+}
+
+/* Tile states (applied to back face via data-state) */
+.wordle-tile[data-state="correct"] .wordle-tile-back {
+  background: #538d4e;
+  border-color: #538d4e;
+}
+
+.wordle-tile[data-state="present"] .wordle-tile-back {
+  background: #b59f3b;
+  border-color: #b59f3b;
+}
+
+.wordle-tile[data-state="absent"] .wordle-tile-back {
+  background: #3a3a3c;
+  border-color: #3a3a3c;
+}
+
+/* ── Tile Animations ── */
+
+@keyframes tile-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.wordle-tile.bounce {
+  animation: tile-bounce 0.6s ease forwards;
+}
+
+@keyframes tile-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-25px); }
+  50% { transform: translateY(-12px); }
+  70% { transform: translateY(-6px); }
+}
+
+/* Grid shake on loss */
+.wordle-grid.shake {
+  animation: grid-shake 0.5s ease;
+}
+
+@keyframes grid-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(5px); }
+}
+
+/* ── Top Votes Bar ── */
+
+.wordle-top-votes {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  min-height: 28px;
+  flex-wrap: wrap;
+}
+
+.vote-candidate {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+
+.vote-count {
+  font-weight: 400;
+  opacity: 0.7;
+}
+
+/* ── Live Vote Feed ── */
+
+.wordle-feed-container {
+  width: 100%;
+  max-width: 340px;
+}
+
+.wordle-feed-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  opacity: 0.5;
+  margin-bottom: 6px;
+}
+
+.wordle-feed {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.2) transparent;
+}
+
+.wordle-feed::-webkit-scrollbar {
+  width: 4px;
+}
+
+.wordle-feed::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wordle-feed::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+}
+
+.feed-entry {
+  display: flex;
+  gap: 8px;
+  font-size: 14px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.05);
+  animation: feed-slide-in 0.25s ease-out;
+}
+
+.feed-username {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.feed-username::after {
+  content: ':';
+}
+
+.feed-word {
+  font-weight: 400;
+  letter-spacing: 1px;
+  opacity: 0.8;
+}
+
+@keyframes feed-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ── Debug ── */
+
+#debug-info {
+  display: none;
+  position: fixed;
+  bottom: 10px;
+  left: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #00ff00;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  z-index: 9999;
+}
+
+#debug-info.visible {
+  display: block;
+}
