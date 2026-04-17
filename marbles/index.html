@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Marbles Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="marbles-canvas"></canvas>
+
+  <div id="debug-info">
+    <div>Status: <span id="status">Initializing...</span></div>
+    <div>State: <span id="game-state">idle</span></div>
+    <div>Messages: <span id="message-count">0</span></div>
+    <div>Marbles: <span id="marble-count">0</span></div>
+    <div>Seed: <span id="seed-display">-</span></div>
+  </div>
+
+  <script type="module">
+    import { MarblesOverlay } from './overlay.js';
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+
+      const parseInt32 = (key) => {
+        const v = params.get(key);
+        return v !== null ? parseInt(v) : undefined;
+      };
+      const parseFloat32 = (key) => {
+        const v = params.get(key);
+        return v !== null ? parseFloat(v) : undefined;
+      };
+      const parseBool = (key, fallback) => {
+        const v = params.get(key);
+        if (v === null) return fallback;
+        return v === 'true' || v === '1';
+      };
+
+      const config = {
+        twitch: {
+          enabled: !!params.get('twitch'),
+          channel: params.get('twitch') || ''
+        },
+        kick: {
+          enabled: !!params.get('kick'),
+          channel: params.get('kick') || ''
+        },
+        debug: params.get('debug') === 'true',
+        settings: {
+          seed: parseInt32('seed'),
+          courseMinLength: parseInt32('courseMinLength'),
+          courseMaxLength: parseInt32('courseMaxLength'),
+          courseHeight: parseInt32('courseHeight'),
+          gravity: parseFloat32('gravity'),
+          startImpulse: parseFloat32('startImpulse'),
+          boostImpulse: parseFloat32('boostImpulse'),
+          boostCooldownMs: parseInt32('boostCooldownMs'),
+          jumpImpulse: parseFloat32('jumpImpulse'),
+          jumpCooldownMs: parseInt32('jumpCooldownMs'),
+          marbleRadius: parseFloat32('marbleRadius'),
+          restitution: parseFloat32('restitution'),
+          maxVx: parseFloat32('maxVx'),
+          cameraLeadFraction: parseFloat32('cameraLeadFraction'),
+          cameraLerp: parseFloat32('cameraLerp'),
+          raceTimeoutMs: parseInt32('raceTimeoutMs'),
+          resultsDurationMs: parseInt32('resultsDurationMs'),
+          countdownMs: parseInt32('countdownMs'),
+          showNames: parseBool('showNames', undefined)
+        }
+      };
+
+      // Strip undefined keys so overlay defaults apply cleanly
+      for (const k of Object.keys(config.settings)) {
+        if (config.settings[k] === undefined) delete config.settings[k];
+      }
+
+      const canvas = document.getElementById('marbles-canvas');
+      const overlay = new MarblesOverlay(config, canvas);
+
+      const debugInfo = document.getElementById('debug-info');
+      const statusEl = document.getElementById('status');
+      const messageCountEl = document.getElementById('message-count');
+      const marbleCountEl = document.getElementById('marble-count');
+      const gameStateEl = document.getElementById('game-state');
+      const seedEl = document.getElementById('seed-display');
+      let messageCount = 0;
+
+      if (config.debug) {
+        debugInfo.classList.add('visible');
+      }
+
+      const originalOnMessage = overlay.onMessage.bind(overlay);
+      overlay.onMessage = function(message) {
+        originalOnMessage(message);
+        messageCount++;
+        messageCountEl.textContent = messageCount;
+        gameStateEl.textContent = overlay.state;
+        marbleCountEl.textContent = overlay.marbles.size;
+        seedEl.textContent = overlay.currentSeed ?? '-';
+      };
+
+      setInterval(() => {
+        gameStateEl.textContent = overlay.state;
+        marbleCountEl.textContent = overlay.marbles.size;
+        seedEl.textContent = overlay.currentSeed ?? '-';
+      }, 500);
+
+      await overlay.init();
+      statusEl.textContent = (config.twitch.enabled || config.kick.enabled) ? 'Connected' : 'Offline (no channel)';
+
+      window.overlay = overlay;
+    }
+
+    init().catch(error => {
+      console.error('Failed to initialize overlay:', error);
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+    });
+  </script>
+</body>
+</html>
