@@ -137,7 +137,7 @@ export class KickClient extends ChatClient {
             badge => badge.type === 'subscriber'
           ),
           messageData.sender?.identity?.badges?.some(
-            badge => badge.type === 'moderator'
+            badge => badge.type === 'moderator' || badge.type === 'broadcaster'
           ),
         );
         this.emit('message', standardMessage);

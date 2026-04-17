@@ -100,8 +100,10 @@ export class TwitchClient extends ChatClient {
       color = colorMatch[1];
     }
 
-    // Extract mod and subscriber status from tags
-    const mod = /;mod=1[;\s]/.test(line);
+    // Extract mod and subscriber status from tags.
+    // The broadcaster does not get mod=1 — detect them via the broadcaster badge.
+    const broadcaster = /badges=[^;\s]*broadcaster\/\d+/.test(line);
+    const mod = broadcaster || /;mod=1[;\s]/.test(line);
     const subscriber = /;subscriber=1[;\s]/.test(line);
 
     // Extract emotes from tags (format: emotes=id:start-end,start-end/id:start-end)
