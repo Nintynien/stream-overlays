@@ -57,8 +57,8 @@ function featRampDown(rng, x, y) {
 }
 
 function featRampUp(rng, x, y) {
-  const len = rng.range(350, 600);
-  const rise = rng.range(60, 160);
+  const len = rng.range(450, 700);
+  const rise = rng.range(30, 80);
   return {
     segments: [{ x1: x, y1: y, x2: x + len, y2: y - rise }],
     endX: x + len, endY: y - rise, kind: 'rampUp'
@@ -149,7 +149,13 @@ function generateCourse(rng, settings) {
 
   let x = startPlatformLen;
   let y = startY;
-  let lastKind = 'flat';
+
+  // Always open with a rampDown so marbles build momentum before any uphill.
+  const opener = featRampDown(rng, x, y);
+  for (const s of opener.segments) segments.push(s);
+  x = opener.endX;
+  y = opener.endY;
+  let lastKind = 'rampDown';
 
   let safety = 0;
   while (x < targetLen - finishPlatformLen && safety < 200) {
@@ -159,6 +165,8 @@ function generateCourse(rng, settings) {
       const trial = candidate.fn(rng, x, y);
       if (trial.endY < minY || trial.endY > maxY) continue;
       if (trial.kind === 'gap' && lastKind === 'gap') continue;
+      // rampUp only after a downhill feature, so marbles arrive with momentum
+      if (trial.kind === 'rampUp' && lastKind !== 'rampDown' && lastKind !== 'stairsDown') continue;
       if (trial.kind === 'rampUp' && y < minY + 80) continue;
       if ((trial.kind === 'rampDown' || trial.kind === 'stairsDown') && y > maxY - 80) continue;
       chosen = trial;
@@ -369,7 +377,10 @@ export class MarblesOverlay extends BaseOverlay {
       finished: false,
       finishTime: 0,
       lastBoostTs: -Infinity,
-      lastJumpTs: -Infinity
+      lastJumpTs: -Infinity,
+      stuckCheckX: 0,
+      stuckCheckMs: 0,
+      stuckStreak: 0
     };
     this.marbles.set(username, marble);
   }
@@ -384,6 +395,9 @@ export class MarblesOverlay extends BaseOverlay {
     this.raceStartMs = performance.now();
     for (const m of this.marbles.values()) {
       m.vx = this.settings.startImpulse;
+      m.stuckCheckX = m.x;
+      m.stuckCheckMs = this.raceStartMs;
+      m.stuckStreak = 0;
     }
   }
 
@@ -472,6 +486,26 @@ export class MarblesOverlay extends BaseOverlay {
         m.finishTime = performance.now() - this.raceStartMs;
         this.finishOrder.push(m.username);
         m.vx *= 0.3;
+      }
+
+      // Stuck-detection safety net: check every 2 s. If the marble hasn't
+      // made 20 px of forward progress, nudge it — escalating with each
+      // consecutive failure so even the steepest allowed upslope is cleared
+      // within a few checks. A hop kicks in on the 2nd failure.
+      const nowMs = performance.now();
+      if (!m.finished && nowMs - m.stuckCheckMs >= 2000) {
+        if (m.x - m.stuckCheckX < 20) {
+          m.stuckStreak += 1;
+          const kick = 120 + m.stuckStreak * 100; // 220, 320, 420, ... capped at maxVx
+          m.vx = Math.min(m.vx + kick, this.settings.maxVx);
+          if (m.stuckStreak >= 2) {
+            m.vy = Math.min(m.vy, 0) - 180; // small hop to clear a crest
+          }
+        } else {
+          m.stuckStreak = 0;
+        }
+        m.stuckCheckX = m.x;
+        m.stuckCheckMs = nowMs;
       }
     }
 
