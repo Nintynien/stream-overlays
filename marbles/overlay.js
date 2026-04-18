@@ -78,22 +78,14 @@ function featBump(rng, x, y) {
 }
 
 function featValley(rng, x, y) {
-  const w = rng.range(200, 400);
-  const d = rng.range(40, 100);
+  const w = rng.range(240, 480);
+  const d = rng.range(60, 180);
   return {
     segments: [
       { x1: x, y1: y, x2: x + w / 2, y2: y + d },
       { x1: x + w / 2, y1: y + d, x2: x + w, y2: y }
     ],
     endX: x + w, endY: y, kind: 'valley'
-  };
-}
-
-function featGap(rng, x, y) {
-  const len = rng.range(120, 260);
-  return {
-    segments: [], // bottom catch handles fallers
-    endX: x + len, endY: y, kind: 'gap'
   };
 }
 
@@ -119,8 +111,7 @@ const FEATURE_POOL = [
   { fn: featRampDown, weight: 3 },
   { fn: featRampUp, weight: 1.5 },
   { fn: featBump, weight: 1.5 },
-  { fn: featValley, weight: 1.5 },
-  { fn: featGap, weight: 1 },
+  { fn: featValley, weight: 2.5 },
   { fn: featStairsDown, weight: 1 }
 ];
 
@@ -164,7 +155,6 @@ function generateCourse(rng, settings) {
       const candidate = pickWeighted(rng, FEATURE_POOL);
       const trial = candidate.fn(rng, x, y);
       if (trial.endY < minY || trial.endY > maxY) continue;
-      if (trial.kind === 'gap' && lastKind === 'gap') continue;
       // rampUp only after a downhill feature, so marbles arrive with momentum
       if (trial.kind === 'rampUp' && lastKind !== 'rampDown' && lastKind !== 'stairsDown') continue;
       if (trial.kind === 'rampUp' && y < minY + 80) continue;
