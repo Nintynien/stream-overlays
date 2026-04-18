@@ -278,6 +278,18 @@ body {
   opacity: 0.8;
 }
 
+.feed-entry.invalid {
+  background: rgba(181, 84, 59, 0.12);
+}
+
+.feed-entry.invalid .feed-word {
+  text-decoration: line-through;
+  text-decoration-color: rgba(181, 84, 59, 0.9);
+  text-decoration-thickness: 2px;
+  opacity: 0.5;
+  color: #b5543b;
+}
+
 @keyframes feed-slide-in {
   from {
     opacity: 0;

@@ -123,10 +123,12 @@ export class WordleOverlay extends BaseOverlay {
     // Votes — only during voting state
     if (this.gameState !== 'voting') return;
     if (!/^[a-z]{5}$/.test(text)) return;
-    if (!this.validWords.has(text)) return;
+
+    const isValid = this.validWords.has(text);
+    this.addFeedEntry(message.username, text, message.color, isValid);
+    if (!isValid) return;
 
     this.votes.set(message.username, text);
-    this.addFeedEntry(message.username, text, message.color);
     this.updateTopVotes();
     this.updatePreviewRow();
   }
@@ -367,9 +369,10 @@ export class WordleOverlay extends BaseOverlay {
     });
   }
 
-  addFeedEntry(username, word, color) {
+  addFeedEntry(username, word, color, isValid = true) {
     const entry = document.createElement('div');
     entry.className = 'feed-entry';
+    if (!isValid) entry.classList.add('invalid');
 
     const nameSpan = document.createElement('span');
     nameSpan.className = 'feed-username';
