@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Marbles 3D Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://esm.sh/three@0.164.1?target=es2022",
+      "three/addons/": "https://esm.sh/three@0.164.1/examples/jsm/",
+      "@dimforge/rapier3d-compat": "https://esm.sh/@dimforge/rapier3d-compat@0.14.0?target=es2022"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="marbles-3d-canvas"></canvas>
+  <canvas id="marbles-hud-canvas"></canvas>
+
+  <div id="debug-info">
+    <div>Status: <span id="status">Initializing...</span></div>
+    <div>State: <span id="game-state">idle</span></div>
+    <div>Messages: <span id="message-count">0</span></div>
+    <div>Marbles: <span id="marble-count">0</span></div>
+    <div>Seed: <span id="seed-display">-</span></div>
+    <div>Phys tick: <span id="phys-tick">-</span></div>
+    <div>FPS: <span id="fps">-</span></div>
+  </div>
+
+  <script type="module">
+    import { Marbles3DOverlay } from './overlay.js';
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+
+      const parseInt32 = (key) => {
+        const v = params.get(key);
+        return v !== null ? parseInt(v) : undefined;
+      };
+      const parseFloat32 = (key) => {
+        const v = params.get(key);
+        return v !== null ? parseFloat(v) : undefined;
+      };
+      const parseBool = (key, fallback) => {
+        const v = params.get(key);
+        if (v === null) return fallback;
+        return v === 'true' || v === '1';
+      };
+
+      const config = {
+        twitch: {
+          enabled: !!params.get('twitch'),
+          channel: params.get('twitch') || ''
+        },
+        kick: {
+          enabled: !!params.get('kick'),
+          channel: params.get('kick') || ''
+        },
+        debug: params.get('debug') === 'true',
+        demo: params.get('demo') === 'true',
+        settings: {
+          seed: parseInt32('seed'),
+          gravity: parseFloat32('gravity'),
+          startSpeed: parseFloat32('startSpeed'),
+          boostDeltaV: parseFloat32('boostDeltaV'),
+          boostCooldownMs: parseInt32('boostCooldownMs'),
+          jumpDeltaV: parseFloat32('jumpDeltaV'),
+          jumpCooldownMs: parseInt32('jumpCooldownMs'),
+          marbleRadius: parseFloat32('marbleRadius'),
+          raceTimeoutMs: parseInt32('raceTimeoutMs'),
+          resultsDurationMs: parseInt32('resultsDurationMs'),
+          countdownMs: parseInt32('countdownMs'),
+          showNames: parseBool('showNames', undefined)
+        }
+      };
+
+      for (const k of Object.keys(config.settings)) {
+        if (config.settings[k] === undefined) delete config.settings[k];
+      }
+
+      const canvas3d = document.getElementById('marbles-3d-canvas');
+      const canvasHud = document.getElementById('marbles-hud-canvas');
+      const overlay = new Marbles3DOverlay(config, canvas3d, canvasHud);
+
+      const debugInfo = document.getElementById('debug-info');
+      const statusEl = document.getElementById('status');
+      const messageCountEl = document.getElementById('message-count');
+      const marbleCountEl = document.getElementById('marble-count');
+      const gameStateEl = document.getElementById('game-state');
+      const seedEl = document.getElementById('seed-display');
+      const physTickEl = document.getElementById('phys-tick');
+      const fpsEl = document.getElementById('fps');
+      let messageCount = 0;
+
+      if (config.debug) {
+        debugInfo.classList.add('visible');
+      }
+
+      const originalOnMessage = overlay.onMessage.bind(overlay);
+      overlay.onMessage = function(message) {
+        originalOnMessage(message);
+        messageCount++;
+        messageCountEl.textContent = messageCount;
+      };
+
+      setInterval(() => {
+        gameStateEl.textContent = overlay.state;
+        marbleCountEl.textContent = overlay.marbles.size;
+        seedEl.textContent = overlay.currentSeed ?? '-';
+        physTickEl.textContent = overlay.physics ? `${overlay.physics.stepsPerSecond.toFixed(0)}/s` : '-';
+        fpsEl.textContent = overlay.fps ? overlay.fps.toFixed(0) : '-';
+      }, 500);
+
+      await overlay.init();
+      statusEl.textContent = (config.twitch.enabled || config.kick.enabled) ? 'Connected' : 'Offline (no channel)';
+
+      window.overlay = overlay;
+    }
+
+    init().catch(error => {
+      console.error('Failed to initialize overlay:', error);
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+    });
+  </script>
+</body>
+</html>
