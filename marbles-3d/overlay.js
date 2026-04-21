@@ -228,7 +228,9 @@ export class Marbles3DOverlay extends BaseOverlay {
       lastJumpTs: -Infinity,
       stuckCheckMs: 0,
       stuckCheckArclength: 0,
-      stuckStreak: 0
+      stuckStreak: 0,
+      heldUntilMs: 0,
+      heldPosition: null
     });
   }
 
@@ -419,6 +421,16 @@ export class Marbles3DOverlay extends BaseOverlay {
     const t = m.body.translation();
     const s = this.sampleAtArclength(m.arclength);
 
+    // Rescue penalty: once teleported, pin the marble in place for 1s before
+    // physics takes over again. Gives other racers a tangible advantage when
+    // someone falls off the track.
+    if (m.heldUntilMs > nowMs && m.heldPosition) {
+      m.body.setTranslation(m.heldPosition, true);
+      m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      return;
+    }
+
     // Kill-plane recovery: teleport back to the nearest spline point if the
     // marble has fallen well below the TRACK at its current arclength. An
     // absolute y threshold doesn't work because the track itself descends
@@ -427,10 +439,12 @@ export class Marbles3DOverlay extends BaseOverlay {
     if (t.y < s.position.y - 5) {
       const recover = s.position.clone().addScaledVector(s.up, 0.6);
       m.body.setTranslation({ x: recover.x, y: recover.y, z: recover.z }, true);
-      const v = m.body.linvel();
-      const fwd = Math.max(0, s.tangent.x * v.x + s.tangent.y * v.y + s.tangent.z * v.z);
-      m.body.setLinvel({ x: s.tangent.x * fwd, y: 0, z: s.tangent.z * fwd }, true);
+      m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      m.heldUntilMs = nowMs + 1000;
+      m.heldPosition = { x: recover.x, y: recover.y, z: recover.z };
+      m.stuckCheckMs = nowMs + 1000;
+      m.stuckCheckArclength = m.arclength;
       return;
     }
 
