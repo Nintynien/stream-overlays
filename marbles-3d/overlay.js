@@ -192,22 +192,28 @@ export class Marbles3DOverlay extends BaseOverlay {
     const radius = this.settings.marbleRadius;
     const spawnPose = this.track.spawnPose;
 
-    // Staging grid on the start platform: 4 across, extra rows queue backward
-    // along -tangent so later joiners don't overlap earlier ones.
-    const colsPerRow = 4;
+    // Staging grid inside the start pen. Scale cols with pen width so 100+
+    // marbles fit without toppling off the sides. Extra rows queue backward
+    // along -tangent (into the pen) so later joiners don't overlap earlier.
+    const spacing = radius * 2.5;
+    const penWidth = this.track.startPen?.width ?? 3;
+    const colsPerRow = Math.max(4, Math.floor((penWidth - radius * 2) / spacing));
     const col = (idx % colsPerRow) - (colsPerRow - 1) / 2;
     const row = Math.floor(idx / colsPerRow);
-    const lateral = col * radius * 2.5;
-    const backward = row * radius * 2.5;
+    const lateral = col * spacing;
+    const backward = row * spacing;
 
     // Lateral axis in the horizontal plane (stable regardless of pitch).
     const right = new THREE.Vector3().crossVectors(spawnPose.tangent, new THREE.Vector3(0, 1, 0));
     if (right.lengthSq() < 1e-6) right.set(0, 0, 1);
     right.normalize();
 
+    // Pen floor slopes forward toward the funnel; raise back rows by the same
+    // rise so every row spawns at a consistent height above the tilted floor.
+    const slopeRise = this.track.startPen?.slopeRisePerMeter ?? 0;
     const pos = {
       x: spawnPose.position.x + right.x * lateral - spawnPose.tangent.x * backward,
-      y: spawnPose.position.y,
+      y: spawnPose.position.y + slopeRise * backward,
       z: spawnPose.position.z + right.z * lateral - spawnPose.tangent.z * backward
     };
 

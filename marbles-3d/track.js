@@ -460,10 +460,130 @@ export function generateTrack(rng, settings) {
     height: wallHeight
   };
 
-  const spawnSample = samples[1] ?? samples[0];
+  // Start pen: a wide flat staging area behind the track entrance with a
+  // funnel that narrows down to the track's flat-floor width (inside of the
+  // fillet). Sized to hold ~100 marbles without them toppling off the sides
+  // at spawn. The whole pen is pitched forward by slopeAngle around penSide
+  // so marbles gravity-feed toward the funnel instead of lingering at the
+  // back. Funnel walls connect the tilted pen's front to the horizontal
+  // track with their own axial rotation.
+  const firstSample = samples[0];
+  const penForward = new THREE.Vector3(firstSample.tangent.x, 0, firstSample.tangent.z);
+  if (penForward.lengthSq() < 1e-6) penForward.set(1, 0, 0);
+  penForward.normalize();
+  const penWorldUp = new THREE.Vector3(0, 1, 0);
+  const penSide = new THREE.Vector3().crossVectors(penWorldUp, penForward).normalize();
+
+  const penWidth = settings.startPenWidth ?? 10;
+  const penDepth = settings.startPenDepth ?? 8;
+  const funnelLength = settings.startPenFunnelLength ?? 3;
+  const penWallHeight = settings.startPenWallHeight ?? wallHeight;
+  const penThick = settings.startPenWallThickness ?? 0.3;
+  const slopeAngle = settings.startPenSlope ?? 0.07; // ~4° forward pitch
+
+  // Tilted basis: rotate penForward/penWorldUp around penSide so the pen's
+  // "forward" points slightly downward and its "up" points slightly forward.
+  // This pitches the whole pen toward the track.
+  const tiltedForward = penForward.clone().applyAxisAngle(penSide, slopeAngle);
+  const tiltedUp = penWorldUp.clone().applyAxisAngle(penSide, slopeAngle);
+
+  const penMat = new THREE.Matrix4().makeBasis(penSide, tiltedUp, tiltedForward);
+  const penQuat = new THREE.Quaternion().setFromRotationMatrix(penMat);
+  const penRot = { x: penQuat.x, y: penQuat.y, z: penQuat.z, w: penQuat.w };
+
+  const penCuboids = [];
+  const pushPenCuboid = (center, half, rot = penRot) => {
+    penCuboids.push({
+      position: { x: center.x, y: center.y, z: center.z },
+      rotation: rot,
+      halfExtents: half
+    });
+  };
+
+  // Floor (pen + funnel combined into one slab so marbles have a continuous
+  // tilted surface to roll across toward the track entrance).
+  const penFloorLength = penDepth + funnelLength;
+  const penFloorCenter = firstSample.position.clone()
+    .addScaledVector(tiltedForward, -penFloorLength / 2)
+    .addScaledVector(tiltedUp, -penThick / 2);
+  pushPenCuboid(penFloorCenter,
+    { x: penWidth / 2, y: penThick / 2, z: penFloorLength / 2 });
+
+  // Back wall — sits on top of the tilted floor's back edge.
+  pushPenCuboid(
+    firstSample.position.clone()
+      .addScaledVector(tiltedForward, -(penFloorLength + penThick / 2))
+      .addScaledVector(tiltedUp, penWallHeight / 2),
+    { x: penWidth / 2, y: penWallHeight / 2, z: penThick / 2 });
+
+  // Side walls — span the pen portion only (not the funnel). Tilted to match
+  // the pen floor; the funnel walls handle the narrowing section separately.
+  for (const sideSign of [-1, 1]) {
+    pushPenCuboid(
+      firstSample.position.clone()
+        .addScaledVector(tiltedForward, -(funnelLength + penDepth / 2))
+        .addScaledVector(penSide, sideSign * (penWidth / 2 + penThick / 2))
+        .addScaledVector(tiltedUp, penWallHeight / 2),
+      { x: penThick / 2, y: penWallHeight / 2, z: penDepth / 2 });
+  }
+
+  // Funnel walls: angle inward from the tilted pen's front corner down to the
+  // track's flat-floor edge (±(trackHalfWidth - filletRadius)). Matching the
+  // fillet inner edge means the funnel exit is flush with the track's flat
+  // floor — marbles roll continuously onto the track without hitting the
+  // fillet as a step. Each funnel wall has its own rotation built from the
+  // back→front axial direction, which slopes down from the tilted pen to the
+  // horizontal track.
+  const funnelExitHalfWidth = Math.max(0.2, trackHalfWidth - filletRadius);
+  for (const sideSign of [-1, 1]) {
+    const backCorner = firstSample.position.clone()
+      .addScaledVector(tiltedForward, -funnelLength)
+      .addScaledVector(penSide, sideSign * penWidth / 2);
+    const frontCorner = firstSample.position.clone()
+      .addScaledVector(penSide, sideSign * funnelExitHalfWidth);
+    const axial = new THREE.Vector3().subVectors(frontCorner, backCorner);
+    const axialLen = axial.length();
+    if (axialLen < 1e-6) continue;
+    axial.normalize();
+    // Build an orthonormal basis around the sloped axial direction. Start
+    // from world-up, then re-derive up from axial × side so the basis is
+    // truly orthogonal (world-up and axial aren't perpendicular due to the
+    // slope).
+    const funnelSide = new THREE.Vector3().crossVectors(penWorldUp, axial).normalize();
+    const funnelUp = new THREE.Vector3().crossVectors(axial, funnelSide).normalize();
+    const mid = backCorner.clone().lerp(frontCorner, 0.5)
+      .addScaledVector(funnelUp, penWallHeight / 2);
+    const funnelMat = new THREE.Matrix4().makeBasis(funnelSide, funnelUp, axial);
+    const funnelQuat = new THREE.Quaternion().setFromRotationMatrix(funnelMat);
+    pushPenCuboid(
+      mid,
+      { x: penThick / 2, y: penWallHeight / 2, z: axialLen / 2 },
+      { x: funnelQuat.x, y: funnelQuat.y, z: funnelQuat.z, w: funnelQuat.w });
+  }
+
+  const startPen = {
+    cuboids: penCuboids,
+    width: penWidth,
+    depth: penDepth,
+    funnelLength,
+    wallHeight: penWallHeight,
+    thickness: penThick,
+    // Vertical rise per meter of backward-horizontal distance. overlay.js
+    // uses this to place staged marbles at a constant height above the
+    // tilted floor regardless of which row they're in.
+    slopeRisePerMeter: Math.tan(slopeAngle)
+  };
+
+  // Spawn just inside the pen, near the funnel entrance. Staging queues
+  // backward along the horizontal pen direction; overlay.js adds the vertical
+  // rise per row via slopeRisePerMeter so back rows stay above the tilted
+  // floor.
+  const spawnOrigin = firstSample.position.clone()
+    .addScaledVector(tiltedForward, -(funnelLength + 0.5))
+    .addScaledVector(tiltedUp, 0.2);
   const spawnPose = {
-    position: spawnSample.position.clone().addScaledVector(spawnSample.up, 0.5),
-    tangent: spawnSample.tangent.clone()
+    position: spawnOrigin,
+    tangent: penForward.clone() // stays horizontal; slope handled separately
   };
 
   // Catch basin past the finish: a big open-top box (floor + 4 walls) that
@@ -543,6 +663,7 @@ export function generateTrack(rng, settings) {
     floorVertices: floor.vertices,
     floorIndices: floor.indices,
     catchBox,
+    startPen,
     finishMarker,
     sampleSpacing: actualSpacing
   };

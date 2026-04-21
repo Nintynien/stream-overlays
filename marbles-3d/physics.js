@@ -72,6 +72,21 @@ export class Physics {
         this.trackBodies.push(body);
       }
     }
+
+    // Start pen: wide staging area that funnels into the track entrance.
+    if (track.startPen) {
+      for (const c of track.startPen.cuboids) {
+        const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+          .setTranslation(c.position.x, c.position.y, c.position.z)
+          .setRotation(c.rotation);
+        const body = this.world.createRigidBody(bodyDesc);
+        const collDesc = RAPIER.ColliderDesc.cuboid(c.halfExtents.x, c.halfExtents.y, c.halfExtents.z)
+          .setFriction(0.45)
+          .setRestitution(0.05);
+        this.world.createCollider(collDesc, body);
+        this.trackBodies.push(body);
+      }
+    }
   }
 
   clearTrack() {

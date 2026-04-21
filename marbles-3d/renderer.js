@@ -38,6 +38,7 @@ export class Renderer {
     this.trackMesh = null;
     this.finishMesh = null;
     this.catchBoxMeshes = [];
+    this.startPenMeshes = [];
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -268,6 +269,28 @@ export class Renderer {
         this.catchBoxMeshes.push(mesh);
       }
     }
+
+    if (track.startPen) {
+      const penMat = new THREE.MeshStandardMaterial({
+        color: 0x4a5260,
+        roughness: 0.75,
+        metalness: 0.05
+      });
+      for (const c of track.startPen.cuboids) {
+        const geom = new THREE.BoxGeometry(
+          c.halfExtents.x * 2,
+          c.halfExtents.y * 2,
+          c.halfExtents.z * 2
+        );
+        const mesh = new THREE.Mesh(geom, penMat);
+        mesh.position.set(c.position.x, c.position.y, c.position.z);
+        mesh.quaternion.set(c.rotation.x, c.rotation.y, c.rotation.z, c.rotation.w);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.startPenMeshes.push(mesh);
+      }
+    }
   }
 
   clearTrackMesh() {
@@ -291,6 +314,15 @@ export class Renderer {
       }
       material.dispose();
       this.catchBoxMeshes = [];
+    }
+    if (this.startPenMeshes.length > 0) {
+      const material = this.startPenMeshes[0].material;
+      for (const mesh of this.startPenMeshes) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      material.dispose();
+      this.startPenMeshes = [];
     }
   }
 
