@@ -39,6 +39,7 @@ export class Renderer {
     this.finishMesh = null;
     this.catchBoxMeshes = [];
     this.startPenMeshes = [];
+    this.obstacleMeshes = [];
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -150,26 +151,18 @@ export class Renderer {
 
   buildTrackMesh(track) {
     this.clearTrackMesh();
-    const { samples, crossSectionPoints, finishMarker } = track;
+    const { samples, perSampleCrossSection, crossSectionPoints, finishMarker } = track;
 
     // Extrude the full U-profile cross-section along each sample's local frame.
-    // crossSectionPoints = [[lateral, vertical], ...] describing the inside
-    // surface including the fillet curves and wall tops.
-    const csCount = crossSectionPoints.length;
+    // Each sample carries its own cross-section (point count is constant so
+    // adjacent rings still connect as quads through widen/narrow tapers — only
+    // the flat floor span scales; fillets and wall tops keep fixed shape).
+    const perSampleCs = perSampleCrossSection ?? samples.map(() => crossSectionPoints);
+    const csCount = perSampleCs[0].length;
     const verts = new Float32Array(samples.length * csCount * 3);
     const colors = new Float32Array(samples.length * csCount * 3);
     const uvs = new Float32Array(samples.length * csCount * 2);
     const indices = [];
-
-    // Cumulative developed arclength across the cross-section, so the texture
-    // stretches evenly over the U-profile (fillets get proportional coverage,
-    // not squashed because they use more vertices than flat spans).
-    const csCumArc = new Float32Array(csCount);
-    for (let j = 1; j < csCount; j++) {
-      const [l0, v0] = crossSectionPoints[j - 1];
-      const [l1, v1] = crossSectionPoints[j];
-      csCumArc[j] = csCumArc[j - 1] + Math.hypot(l1 - l0, v1 - v0);
-    }
 
     // Texture repeat period along the track (meters). Joints drawn at 0.25 and
     // 0.75 of the texture give cross-joints every 0.5m of arclength — fine
@@ -185,9 +178,16 @@ export class Renderer {
     const tmp = new THREE.Vector3();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
+      const cs = perSampleCs[i];
       const vCoord = s.arclength / TEX_REPEAT;
+      // Per-sample developed arclength across the cross-section so the texture
+      // stretches evenly along a tapering width.
+      let uAccum = 0;
+      let prevLat = cs[0][0], prevVert = cs[0][1];
       for (let j = 0; j < csCount; j++) {
-        const [lat, vert] = crossSectionPoints[j];
+        const [lat, vert] = cs[j];
+        if (j > 0) uAccum += Math.hypot(lat - prevLat, vert - prevVert);
+        prevLat = lat; prevVert = vert;
         tmp.copy(s.position).addScaledVector(s.right, lat).addScaledVector(s.up, vert);
         const base3 = (i * csCount + j) * 3;
         verts[base3 + 0] = tmp.x;
@@ -198,7 +198,7 @@ export class Renderer {
         colors[base3 + 1] = c.g;
         colors[base3 + 2] = c.b;
         const base2 = (i * csCount + j) * 2;
-        uvs[base2 + 0] = csCumArc[j] / TEX_REPEAT;
+        uvs[base2 + 0] = uAccum / TEX_REPEAT;
         uvs[base2 + 1] = vCoord;
       }
     }
@@ -291,6 +291,24 @@ export class Renderer {
         this.startPenMeshes.push(mesh);
       }
     }
+
+    if (track.obstaclePlacements && track.obstaclePlacements.length > 0) {
+      const obsMat = new THREE.MeshStandardMaterial({
+        color: 0xfacc15,
+        roughness: 0.45,
+        metalness: 0.15
+      });
+      for (const o of track.obstaclePlacements) {
+        const geom = new THREE.CylinderGeometry(o.radius, o.radius, o.halfHeight * 2, 16);
+        const mesh = new THREE.Mesh(geom, obsMat);
+        mesh.position.set(o.position.x, o.position.y, o.position.z);
+        mesh.quaternion.set(o.rotation.x, o.rotation.y, o.rotation.z, o.rotation.w);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.obstacleMeshes.push(mesh);
+      }
+    }
   }
 
   clearTrackMesh() {
@@ -323,6 +341,15 @@ export class Renderer {
       }
       material.dispose();
       this.startPenMeshes = [];
+    }
+    if (this.obstacleMeshes.length > 0) {
+      const material = this.obstacleMeshes[0].material;
+      for (const mesh of this.obstacleMeshes) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      material.dispose();
+      this.obstacleMeshes = [];
     }
   }
 

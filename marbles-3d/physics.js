@@ -87,6 +87,24 @@ export class Physics {
         this.trackBodies.push(body);
       }
     }
+
+    // Plinko obstacles in widened sections — cylinders aligned to sample.up,
+    // bouncier than walls so marbles visibly ping off them and lower friction
+    // for sharp deflection. Round profile avoids the directional bias that
+    // cuboid flat faces would introduce.
+    if (track.obstaclePlacements) {
+      for (const o of track.obstaclePlacements) {
+        const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+          .setTranslation(o.position.x, o.position.y, o.position.z)
+          .setRotation(o.rotation);
+        const body = this.world.createRigidBody(bodyDesc);
+        const collDesc = RAPIER.ColliderDesc.cylinder(o.halfHeight, o.radius)
+          .setFriction(0.3)
+          .setRestitution(0.35);
+        this.world.createCollider(collDesc, body);
+        this.trackBodies.push(body);
+      }
+    }
   }
 
   clearTrack() {

@@ -37,6 +37,28 @@ function hashString(s) {
   return h >>> 0;
 }
 
+// Deterministic permutation of [0..n-1] from a 32-bit seed. Used to shuffle
+// pen column assignments per race so the same join index doesn't always land
+// in the center-front slot (otherwise idx 5/6 always win — the center
+// columns of the front row have a straight shot through the funnel).
+function seededPermutation(n, seed) {
+  let s = (seed >>> 0) || 1;
+  const rand = () => {
+    s = (s + 0x6D2B79F5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const arr = new Array(n);
+  for (let i = 0; i < n; i++) arr[i] = i;
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr;
+}
+
 function colorFromUsername(u) {
   const h = hashString((u || '').toLowerCase()) % 360;
   return `hsl(${h}, 70%, 55%)`;
@@ -198,10 +220,29 @@ export class Marbles3DOverlay extends BaseOverlay {
     const spacing = radius * 2.5;
     const penWidth = this.track.startPen?.width ?? 3;
     const colsPerRow = Math.max(4, Math.floor((penWidth - radius * 2) / spacing));
-    const col = (idx % colsPerRow) - (colsPerRow - 1) / 2;
     const row = Math.floor(idx / colsPerRow);
-    const lateral = col * spacing;
-    const backward = row * spacing;
+    const rowSlot = idx % colsPerRow;
+    // Per-race, per-row column permutation: the n-th joiner into a row lands
+    // in a shuffled column instead of column n. Without this, the center
+    // columns of row 0 (e.g. idx 5/6 with 12 cols) always get the straight
+    // shot through the funnel and win every race. Seeding with
+    // (currentSeed ^ row) keeps rows independent but race-stable, so
+    // gameplay is deterministic within a race but varies across races.
+    const raceSeed = (this.currentSeed ?? 1) >>> 0;
+    const rowSeed = (raceSeed ^ Math.imul(row + 1, 0x9E3779B9)) >>> 0;
+    const colPerm = seededPermutation(colsPerRow, rowSeed);
+    const shuffledCol = colPerm[rowSlot];
+    const col = shuffledCol - (colsPerRow - 1) / 2;
+    // Per-marble jitter within the grid cell, seeded off the username. The
+    // column permutation handles the dominant problem (same idx always in
+    // the hotspot); jitter on top prevents any marble from landing exactly
+    // on the centerline and keeps the pack from looking rigidly gridded.
+    const h = hashString(username);
+    const jitterAmount = radius * 0.4;
+    const jitterLat = (((h & 0xFFFF) / 0xFFFF) - 0.5) * 2 * jitterAmount;
+    const jitterBack = ((((h >>> 16) & 0xFFFF) / 0xFFFF) - 0.5) * 2 * jitterAmount;
+    const lateral = col * spacing + jitterLat;
+    const backward = row * spacing + jitterBack;
 
     // Lateral axis in the horizontal plane (stable regardless of pitch).
     const right = new THREE.Vector3().crossVectors(spawnPose.tangent, new THREE.Vector3(0, 1, 0));

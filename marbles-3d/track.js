@@ -24,7 +24,7 @@ function horizontalTangent(tangent) {
 function featFlat(rng, state) {
   const len = rng.range(5, 9);
   const end = state.pos.clone().addScaledVector(horizontalTangent(state.tangent), len);
-  return { kind: 'flat', keypoints: [{ pos: end, bank: 0 }] };
+  return { kind: 'flat', keypoints: [{ pos: end, bank: 0, halfWidth: state.trackHalfWidth }] };
 }
 
 function featRampDown(rng, state) {
@@ -32,7 +32,7 @@ function featRampDown(rng, state) {
   const drop = rng.range(1.5, 4.0);
   const end = state.pos.clone().addScaledVector(horizontalTangent(state.tangent), len);
   end.y -= drop;
-  return { kind: 'rampDown', keypoints: [{ pos: end, bank: 0 }] };
+  return { kind: 'rampDown', keypoints: [{ pos: end, bank: 0, halfWidth: state.trackHalfWidth }] };
 }
 
 function featRampUp(rng, state) {
@@ -40,7 +40,7 @@ function featRampUp(rng, state) {
   const rise = rng.range(0.3, 0.9);
   const end = state.pos.clone().addScaledVector(horizontalTangent(state.tangent), len);
   end.y += rise;
-  return { kind: 'rampUp', keypoints: [{ pos: end, bank: 0 }] };
+  return { kind: 'rampUp', keypoints: [{ pos: end, bank: 0, halfWidth: state.trackHalfWidth }] };
 }
 
 function featBump(rng, state) {
@@ -50,7 +50,13 @@ function featBump(rng, state) {
   const peak = state.pos.clone().addScaledVector(horiz, w * 0.5);
   peak.y += h;
   const end = state.pos.clone().addScaledVector(horiz, w);
-  return { kind: 'bump', keypoints: [{ pos: peak, bank: 0 }, { pos: end, bank: 0 }] };
+  return {
+    kind: 'bump',
+    keypoints: [
+      { pos: peak, bank: 0, halfWidth: state.trackHalfWidth },
+      { pos: end, bank: 0, halfWidth: state.trackHalfWidth }
+    ]
+  };
 }
 
 function featValley(rng, state) {
@@ -60,7 +66,13 @@ function featValley(rng, state) {
   const low = state.pos.clone().addScaledVector(horiz, w * 0.5);
   low.y -= d;
   const end = state.pos.clone().addScaledVector(horiz, w);
-  return { kind: 'valley', keypoints: [{ pos: low, bank: 0 }, { pos: end, bank: 0 }] };
+  return {
+    kind: 'valley',
+    keypoints: [
+      { pos: low, bank: 0, halfWidth: state.trackHalfWidth },
+      { pos: end, bank: 0, halfWidth: state.trackHalfWidth }
+    ]
+  };
 }
 
 function featSpeedBumps(rng, state) {
@@ -73,9 +85,64 @@ function featSpeedBumps(rng, state) {
     const peak = state.pos.clone().addScaledVector(horiz, (i + 0.5) * spacing);
     peak.y += height;
     const end = state.pos.clone().addScaledVector(horiz, (i + 1) * spacing);
-    keypoints.push({ pos: peak, bank: 0 }, { pos: end, bank: 0 });
+    keypoints.push(
+      { pos: peak, bank: 0, halfWidth: state.trackHalfWidth },
+      { pos: end, bank: 0, halfWidth: state.trackHalfWidth }
+    );
   }
   return { kind: 'speedBumps', keypoints };
+}
+
+function featWiden(rng, state) {
+  // Wide plinko-ready section: taper out, hold wide, taper back in.
+  // 8% downhill so marbles don't stall after bouncing off the pegs.
+  const taperLen = 2.0;
+  const middleLen = rng.range(10.0, 14.0);
+  const totalLen = taperLen * 2 + middleLen;
+  const totalDrop = totalLen * 0.08;
+  const wideHW = state.trackHalfWidth * 2.0;
+  const horiz = horizontalTangent(state.tangent);
+  const baseY = state.pos.y;
+  const p1 = state.pos.clone().addScaledVector(horiz, taperLen);
+  p1.y = baseY - totalDrop * (taperLen / totalLen);
+  const p2 = state.pos.clone().addScaledVector(horiz, taperLen + middleLen);
+  p2.y = baseY - totalDrop * ((taperLen + middleLen) / totalLen);
+  const p3 = state.pos.clone().addScaledVector(horiz, totalLen);
+  p3.y = baseY - totalDrop;
+  return {
+    kind: 'widen',
+    keypoints: [
+      { pos: p1, bank: 0, halfWidth: wideHW },
+      { pos: p2, bank: 0, halfWidth: wideHW },
+      { pos: p3, bank: 0, halfWidth: state.trackHalfWidth }
+    ]
+  };
+}
+
+function featNarrow(rng, state) {
+  // Squeeze section: taper in, hold narrow, taper back out, 8% downhill so
+  // the taper-in doesn't dam up slow marbles at the funnel.
+  const taperLen = 2.0;
+  const middleLen = rng.range(6.0, 9.0);
+  const totalLen = taperLen * 2 + middleLen;
+  const totalDrop = totalLen * 0.08;
+  const narrowHW = state.trackHalfWidth * 0.5;
+  const horiz = horizontalTangent(state.tangent);
+  const baseY = state.pos.y;
+  const p1 = state.pos.clone().addScaledVector(horiz, taperLen);
+  p1.y = baseY - totalDrop * (taperLen / totalLen);
+  const p2 = state.pos.clone().addScaledVector(horiz, taperLen + middleLen);
+  p2.y = baseY - totalDrop * ((taperLen + middleLen) / totalLen);
+  const p3 = state.pos.clone().addScaledVector(horiz, totalLen);
+  p3.y = baseY - totalDrop;
+  return {
+    kind: 'narrow',
+    keypoints: [
+      { pos: p1, bank: 0, halfWidth: narrowHW },
+      { pos: p2, bank: 0, halfWidth: narrowHW },
+      { pos: p3, bank: 0, halfWidth: state.trackHalfWidth }
+    ]
+  };
 }
 
 function arcTurn(rng, state, radius, totalAngle, dir, peakBankRad) {
@@ -103,7 +170,7 @@ function arcTurn(rng, state, radius, totalAngle, dir, peakBankRad) {
     // applying a negative roll around the tangent; same logic mirrored for
     // right turns.
     const bank = -dir * peakBankRad * Math.sin(Math.PI * fraction);
-    keypoints.push({ pos: wp, bank });
+    keypoints.push({ pos: wp, bank, halfWidth: state.trackHalfWidth });
   }
   return { kind: dir > 0 ? 'turnLeft' : 'turnRight', keypoints };
 }
@@ -141,7 +208,9 @@ const FEATURE_POOL = [
   { fn: featSpeedBumps, weight: 1.0 },
   { fn: featTurnLeft, weight: 1.8 },
   { fn: featTurnRight, weight: 1.8 },
-  { fn: featBankedTurn, weight: 1.4 }
+  { fn: featBankedTurn, weight: 1.4 },
+  { fn: featWiden, weight: 0.6 },     // gated in generator (no stacking, not near start/end)
+  { fn: featNarrow, weight: 0.6 }     // gated in generator (no stacking, not near start/end)
 ];
 
 function pickWeighted(rng, pool) {
@@ -211,6 +280,18 @@ function interpolateBank(arclength, kpArclength, kpBank) {
   return kpBank[idx] * (1 - ease) + kpBank[idx + 1] * ease;
 }
 
+function interpolateHalfWidth(arclength, kpArclength, kpHalfWidth) {
+  let idx = 0;
+  while (idx < kpArclength.length - 1 && kpArclength[idx + 1] < arclength) idx++;
+  if (idx >= kpArclength.length - 1) return kpHalfWidth[kpHalfWidth.length - 1];
+  const a = kpArclength[idx];
+  const b = kpArclength[idx + 1];
+  if (b - a < 1e-6) return kpHalfWidth[idx];
+  const t = (arclength - a) / (b - a);
+  const ease = (1 - Math.cos(Math.PI * t)) / 2;
+  return kpHalfWidth[idx] * (1 - ease) + kpHalfWidth[idx + 1] * ease;
+}
+
 // ========== Geometry output for physics ==========
 
 // Cross-section of the U-profile: left wall top, left fillet arc, flat floor,
@@ -243,9 +324,11 @@ function fullProfilePoints(halfWidth, wallHeight, filletRadius, filletSegments) 
   return pts; // length = 2*(filletSegments+1) + 2
 }
 
-function buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEndIdx) {
-  // crossSectionPoints is the full U-profile; insideStart/End are the slice
-  // that excludes wall tops (the surface the marble actually contacts).
+function buildFloorTrimesh(samples, perSampleCrossSection, insideStartIdx, insideEndIdx) {
+  // perSampleCrossSection[i] is the full U-profile for sample i; insideStart/End
+  // select the slice excluding wall tops (the surface the marble actually
+  // contacts). Point count is constant across samples so adjacent rings connect
+  // as quads even when halfWidth tapers (only the flat floor span scales).
   const insideCount = insideEndIdx - insideStartIdx;
   const vertsPerSample = insideCount;
   const vertices = new Float32Array(samples.length * vertsPerSample * 3);
@@ -255,8 +338,9 @@ function buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEn
   const tmp = new THREE.Vector3();
   for (let i = 0; i < samples.length; i++) {
     const s = samples[i];
+    const cs = perSampleCrossSection[i];
     for (let j = 0; j < vertsPerSample; j++) {
-      const [lat, vert] = crossSectionPoints[insideStartIdx + j];
+      const [lat, vert] = cs[insideStartIdx + j];
       tmp.copy(s.position).addScaledVector(s.right, lat).addScaledVector(s.up, vert);
       const base = (i * vertsPerSample + j) * 3;
       vertices[base + 0] = tmp.x;
@@ -290,12 +374,15 @@ function buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEn
 
 export function generateTrack(rng, settings) {
   const startY = settings.trackStartY ?? 3.0;
-  const targetLen = rng.range(settings.courseMinLength ?? 130, settings.courseMaxLength ?? 220);
+  const targetLen = rng.range(settings.courseMinLength ?? 234, settings.courseMaxLength ?? 396);
   // Allow the track to descend well past the starting y so a long course with
   // turns (which now descend gently) doesn't flatline near minY. The track is
   // the only visible surface — there's no ground plane — so a deep-running
-  // track just scrolls with the camera, which follows the marble.
-  const minY = settings.courseMinY ?? -30;
+  // track just scrolls with the camera, which follows the marble. Scales with
+  // targetLen because the generator averages ~0.15m of descent per meter of
+  // track, so longer courses need deeper floors or the tail flattens out once
+  // every descending feature gets rejected by the minY clamp.
+  const minY = settings.courseMinY ?? (startY - targetLen * 0.30);
   const maxY = settings.courseMaxY ?? 25;
   const trackHalfWidth = settings.trackHalfWidth ?? 1.5;
   const wallHeight = settings.wallHeight ?? 1.2;
@@ -310,7 +397,7 @@ export function generateTrack(rng, settings) {
   // rolls backward off the track under gravity during countdown.
   const keypoints = [];
   for (let i = 0; i <= 4; i++) {
-    keypoints.push({ pos: new THREE.Vector3(i, startY, 0), bank: 0 });
+    keypoints.push({ pos: new THREE.Vector3(i, startY, 0), bank: 0, halfWidth: trackHalfWidth });
   }
 
   const state = {
@@ -350,6 +437,17 @@ export function generateTrack(rng, settings) {
       if (trial.kind === 'rampUp' && state.pos.y < minY + 2) continue;
       if (trial.kind === 'rampDown' && state.pos.y > maxY - 2) continue;
 
+      // Width-change features: no stacking (widen-after-widen or
+      // narrow-after-narrow would compound widths), no banked predecessor (the
+      // taper would fight residual banking), and none near the start or the
+      // tail so the opener rampDown and finish platform keep baseline width.
+      if (trial.kind === 'widen' || trial.kind === 'narrow') {
+        if (lastKind === 'widen' || lastKind === 'narrow') continue;
+        if (lastKind === 'bankedTurn' || lastKind === 'turnLeft' || lastKind === 'turnRight') continue;
+        if (distanceOf(keypoints) < 10) continue;
+        if (distanceOf(keypoints) > targetLen - 20) continue;
+      }
+
       // Approximate yaw change from entry tangent vs. last-segment tangent.
       const kpLast = trial.keypoints[trial.keypoints.length - 1].pos;
       const kpPenult = trial.keypoints.length >= 2
@@ -381,7 +479,7 @@ export function generateTrack(rng, settings) {
   const finishHoriz = horizontalTangent(state.tangent);
   for (let i = 1; i <= 4; i++) {
     const pt = state.pos.clone().addScaledVector(finishHoriz, i);
-    keypoints.push({ pos: pt, bank: 0 });
+    keypoints.push({ pos: pt, bank: 0, halfWidth: trackHalfWidth });
   }
 
   // Centripetal Catmull-Rom gives smooth curves without self-intersections.
@@ -411,6 +509,7 @@ export function generateTrack(rng, settings) {
   const kpLenLast = kpCumLen[kpCumLen.length - 1] || 1;
   const kpArclength = kpCumLen.map(l => l / kpLenLast * totalLength);
   const kpBank = keypoints.map(k => k.bank);
+  const kpHalfWidth = keypoints.map(k => k.halfWidth ?? trackHalfWidth);
 
   for (const sample of samples) {
     const bank = interpolateBank(sample.arclength, kpArclength, kpBank);
@@ -418,18 +517,89 @@ export function generateTrack(rng, settings) {
       sample.up.applyAxisAngle(sample.tangent, bank);
       sample.right.crossVectors(sample.tangent, sample.up).normalize();
     }
+    sample.halfWidth = interpolateHalfWidth(sample.arclength, kpArclength, kpHalfWidth);
   }
 
-  // Full U-profile cross-section: wall top → fillet → floor → fillet → wall top.
-  // The physics trimesh and the visual mesh both use the whole profile — the
-  // walls are part of the trimesh (one continuous surface from wall top, down
-  // the vertical face, around the fillet, across the floor, and back up) so
-  // the fillet-to-wall transition has no discretization seam.
-  const crossSectionPoints = fullProfilePoints(trackHalfWidth, wallHeight, filletRadius, filletSegments);
+  // Full U-profile cross-section per sample: wall top → fillet → floor → fillet
+  // → wall top. The physics trimesh and the visual mesh both use the whole
+  // profile — walls are part of the trimesh (one continuous surface from wall
+  // top, down the vertical face, around the fillet, across the floor, and back
+  // up) so the fillet-to-wall transition has no discretization seam. Cross-
+  // section point count is constant across samples (only the flat floor span
+  // between fillets scales with halfWidth) so adjacent rings still connect as
+  // quads through widen/narrow tapers.
+  const perSampleCrossSection = samples.map(s =>
+    fullProfilePoints(s.halfWidth, wallHeight, filletRadius, filletSegments)
+  );
+  const csCount = perSampleCrossSection[0].length;
   const insideStartIdx = 0;
-  const insideEndIdx = crossSectionPoints.length;
+  const insideEndIdx = csCount;
+  // Legacy single cross-section for any consumer that still wants a
+  // representative shape (e.g. for debugging). Renderer and trimesh use the
+  // per-sample array.
+  const crossSectionPoints = fullProfilePoints(trackHalfWidth, wallHeight, filletRadius, filletSegments);
 
-  const floor = buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEndIdx);
+  const floor = buildFloorTrimesh(samples, perSampleCrossSection, insideStartIdx, insideEndIdx);
+
+  // Plinko obstacles: scan for contiguous runs of widened samples and place a
+  // staggered grid of short cuboid pegs across each run. Each peg sits on the
+  // floor of its nearest sample and is oriented to that sample's frame so pegs
+  // follow the track even when the widen happens mid-turn (no such case today
+  // because widen is gated off after turns, but the math is consistent either
+  // way).
+  const obstaclePlacements = [];
+  {
+    const widenThreshold = trackHalfWidth * 1.3;
+    const pegRadius = 0.14;
+    const pegHalfHeight = 0.35; // ~0.7m tall post
+    const rowSpacing = 1.8;
+    const marbleClearance = 0.35; // keep pegs this far from walls and each other
+    // Walk samples, identify runs where halfWidth > threshold, then drop pegs
+    // at rowSpacing intervals by arclength within each run. Pegs are cylinders
+    // aligned to sample.up — round profile gives isotropic plinko deflection
+    // instead of the flat-faced bias a cuboid would produce.
+    let i = 0;
+    while (i < samples.length) {
+      if (samples[i].halfWidth <= widenThreshold) { i++; continue; }
+      const runStart = i;
+      while (i < samples.length && samples[i].halfWidth > widenThreshold) i++;
+      const runEnd = i - 1;
+      const startArc = samples[runStart].arclength;
+      const endArc = samples[runEnd].arclength;
+      const runLen = endArc - startArc;
+      if (runLen < rowSpacing * 1.5) continue;
+      const numRows = Math.floor(runLen / rowSpacing);
+      for (let row = 0; row < numRows; row++) {
+        const rowArc = startArc + (row + 0.5) * (runLen / numRows);
+        let sIdx = runStart;
+        let bestDelta = Infinity;
+        for (let k = runStart; k <= runEnd; k++) {
+          const d = Math.abs(samples[k].arclength - rowArc);
+          if (d < bestDelta) { bestDelta = d; sIdx = k; }
+        }
+        const s = samples[sIdx];
+        const maxLateral = s.halfWidth - marbleClearance - pegRadius;
+        const pegsThisRow = 3;
+        const offsetSign = (row % 2 === 0) ? 0 : 0.5;
+        for (let p = 0; p < pegsThisRow; p++) {
+          const tFrac = ((p + offsetSign) / (pegsThisRow - 0.5)) - 0.5;
+          const lateral = tFrac * 2 * maxLateral;
+          if (Math.abs(lateral) > maxLateral) continue;
+          const tmpMat = new THREE.Matrix4().makeBasis(s.right, s.up, s.tangent);
+          const quat = new THREE.Quaternion().setFromRotationMatrix(tmpMat);
+          const pos = s.position.clone()
+            .addScaledVector(s.right, lateral)
+            .addScaledVector(s.up, pegHalfHeight);
+          obstaclePlacements.push({
+            position: { x: pos.x, y: pos.y, z: pos.z },
+            rotation: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+            radius: pegRadius,
+            halfHeight: pegHalfHeight
+          });
+        }
+      }
+    }
+  }
 
   // Place finish detection and marker right at the end of the track — the
   // catch basin past the end corrals marbles that roll off, so there's no
@@ -659,9 +829,11 @@ export function generateTrack(rng, settings) {
     wallHeight,
     filletRadius,
     filletSegments,
-    crossSectionPoints, // renderer uses this to extrude the visible U-profile
+    crossSectionPoints,       // baseline-width profile (legacy; unused by renderer)
+    perSampleCrossSection,    // U-profile per sample; renderer extrudes this
     floorVertices: floor.vertices,
     floorIndices: floor.indices,
+    obstaclePlacements,
     catchBox,
     startPen,
     finishMarker,
