@@ -664,8 +664,7 @@ export class MarblesOverlay extends BaseOverlay {
     const ch = this.canvas.height;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, cw, ch);
+    ctx.clearRect(0, 0, cw, ch);
 
     if (this.course) {
       const scale = ch / this.settings.viewportHeight;
@@ -688,8 +687,6 @@ export class MarblesOverlay extends BaseOverlay {
     const topY = this.camera.y - 50;
     const bottomY = this.camera.y + viewWorldH + 50;
 
-    ctx.strokeStyle = '#888';
-    ctx.lineWidth = 4;
     ctx.lineCap = 'round';
     ctx.beginPath();
     for (const seg of this.course.segments) {
@@ -702,23 +699,33 @@ export class MarblesOverlay extends BaseOverlay {
       ctx.moveTo(seg.x1, seg.y1);
       ctx.lineTo(seg.x2, seg.y2);
     }
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.lineWidth = 7;
+    ctx.stroke();
+    ctx.strokeStyle = '#d0d0d0';
+    ctx.lineWidth = 4;
     ctx.stroke();
 
-    // Finish line — dashed vertical spans full course, label sits above the
-    // finish platform so it's visible inside the camera window.
     if (this.course.finishX >= leftX && this.course.finishX <= rightX) {
-      ctx.strokeStyle = '#4ade80';
-      ctx.lineWidth = 3;
       ctx.setLineDash([14, 10]);
       ctx.beginPath();
       ctx.moveTo(this.course.finishX, 0);
       ctx.lineTo(this.course.finishX, this.course.courseHeight);
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.lineWidth = 6;
+      ctx.stroke();
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth = 3;
       ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#4ade80';
+
       ctx.font = 'bold 40px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'bottom';
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.strokeText('FINISH', this.course.finishX, this.course.finishY - 60);
+      ctx.fillStyle = '#4ade80';
       ctx.fillText('FINISH', this.course.finishX, this.course.finishY - 60);
     }
   }
@@ -752,16 +759,34 @@ export class MarblesOverlay extends BaseOverlay {
     }
   }
 
+  drawPanel(ctx, x, y, w, h, alpha = 0.72) {
+    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
+    const r = 16;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   drawHud(ctx, nowMs) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
 
     if (this.state === 'idle') {
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = 'bold 28px system-ui, sans-serif';
-      ctx.fillText('Mods: type !lobby to start a marble race', vw / 2, vh / 2);
+      const label = 'Mods: type !lobby to start a marble race';
+      const tw = ctx.measureText(label).width;
+      const panelW = tw + 40;
+      const panelH = 48;
+      this.drawPanel(ctx, vw / 2 - panelW / 2, vh / 2 - panelH / 2, panelW, panelH);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, vw / 2, vh / 2);
     } else if (this.state === 'lobby') {
       this.drawLobbyHud(ctx, vw, vh);
     } else if (this.state === 'countdown') {
@@ -774,8 +799,30 @@ export class MarblesOverlay extends BaseOverlay {
   }
 
   drawLobbyHud(ctx, vw, vh) {
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
-    ctx.fillRect(0, 0, vw, vh);
+    const names = Array.from(this.marbles.keys());
+    const colW = 220;
+    const rowH = 28;
+    const padX = 80;
+    const startY = vh * 0.44;
+    const cols = Math.max(1, Math.floor((vw - padX * 2) / colW));
+    const maxRows = Math.max(1, Math.floor((vh - startY - 80) / rowH));
+    const maxShown = cols * maxRows;
+    const shown = Math.min(names.length, maxShown);
+    const usedCols = shown > 0 ? Math.min(cols, Math.ceil(shown / maxRows)) : 0;
+    const usedRows = shown > 0 ? Math.min(maxRows, shown) : 0;
+
+    const panelX = padX - 40;
+    const panelY = vh * 0.10;
+    const listBottom = usedRows > 0 ? startY + usedRows * rowH : startY;
+    const overflowBottom = names.length > maxShown ? vh - 40 : listBottom;
+    const footerBottom = vh - 14;
+    const panelBottom = Math.max(listBottom + 20, overflowBottom, footerBottom);
+    const panelH = panelBottom - panelY;
+    const contentW = usedCols > 0 ? usedCols * colW : 0;
+    const panelW = Math.max(vw * 0.5, contentW + 80, 720);
+    const clampedW = Math.min(panelW, vw - (padX - 40) * 2);
+    const panelXCentered = vw / 2 - clampedW / 2;
+    this.drawPanel(ctx, panelXCentered, panelY, clampedW, panelH);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -792,22 +839,14 @@ export class MarblesOverlay extends BaseOverlay {
     const n = this.marbles.size;
     ctx.fillText(`${n} player${n === 1 ? '' : 's'} joined`, vw / 2, vh * 0.36);
 
-    const names = Array.from(this.marbles.keys());
     ctx.font = '20px system-ui, sans-serif';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    const colW = 220;
-    const rowH = 28;
-    const padX = 80;
-    const startY = vh * 0.44;
-    const cols = Math.max(1, Math.floor((vw - padX * 2) / colW));
-    const maxRows = Math.max(1, Math.floor((vh - startY - 80) / rowH));
-    const maxShown = cols * maxRows;
-    const shown = Math.min(names.length, maxShown);
+    const listLeft = vw / 2 - (usedCols * colW) / 2;
     for (let i = 0; i < shown; i++) {
       const col = Math.floor(i / maxRows);
       const row = i % maxRows;
-      const x = padX + col * colW;
+      const x = (usedCols > 0 ? listLeft : padX) + col * colW;
       const y = startY + row * rowH;
       ctx.fillStyle = colorFromUsername(names[i]);
       ctx.fillText('● ' + names[i], x, y);
@@ -818,7 +857,7 @@ export class MarblesOverlay extends BaseOverlay {
       ctx.fillText(`…and ${names.length - maxShown} more`, vw / 2, vh - 56);
     }
 
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.font = '20px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Mods: type !start to begin', vw / 2, vh - 30);
@@ -830,8 +869,9 @@ export class MarblesOverlay extends BaseOverlay {
     const secsLeft = Math.ceil(remaining / 1000);
     const label = secsLeft > 0 ? String(secsLeft) : 'GO!';
 
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(0, 0, vw, vh);
+    const panelW = 420;
+    const panelH = 320;
+    this.drawPanel(ctx, vw / 2 - panelW / 2, vh / 2 - panelH / 2, panelW, panelH);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -910,8 +950,9 @@ export class MarblesOverlay extends BaseOverlay {
   }
 
   drawFinishedHud(ctx, vw, vh) {
-    ctx.fillStyle = 'rgba(0,0,0,0.72)';
-    ctx.fillRect(0, 0, vw, vh);
+    const panelW = 720;
+    const panelH = 520;
+    this.drawPanel(ctx, vw / 2 - panelW / 2, vh * 0.10, panelW, panelH);
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
