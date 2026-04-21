@@ -107,6 +107,12 @@ export class Marbles3DOverlay extends BaseOverlay {
     this.fps = 0;
     this.frameCountWindow = 0;
     this.frameWindowStartMs = 0;
+
+    // Camera control state. Mods can override the default leader-follow
+    // behavior with chat commands; updateCamera() resolves mode each frame.
+    this.cameraMode = 'auto';              // 'auto' | 'user' | 'all'
+    this.cameraTargetUser = null;          // Map key in this.marbles when mode==='user'
+    this.cameraFinishedLingerUntilMs = 0;  // linger on a finished target until this time, then fall back to 'auto'
   }
 
   async onInit() {
@@ -147,7 +153,11 @@ export class Marbles3DOverlay extends BaseOverlay {
   }
 
   onMessage(message) {
-    const text = (message.message || '').trim().toLowerCase();
+    const raw = (message.message || '').trim();
+    const text = raw.toLowerCase();
+    const parts = raw.split(/\s+/);
+    const cmd = (parts[0] || '').toLowerCase();
+    const arg = parts.slice(1).join(' ').trim(); // original case preserved for username lookup
     const isMod = !!message.moderator;
     const username = message.username;
     const now = performance.now();
@@ -164,11 +174,21 @@ export class Marbles3DOverlay extends BaseOverlay {
       this.tryJump(username, now);
     } else if (text === '!endrace' && isMod && (this.state === 'racing' || this.state === 'countdown')) {
       this.endRace('mod');
+    } else if ((cmd === '!camera' || cmd === '!cam' || cmd === '!spectate') && isMod &&
+               (this.state === 'countdown' || this.state === 'racing' || this.state === 'finished')) {
+      this.handleCameraCommand(cmd, arg);
     }
+  }
+
+  resetCameraMode() {
+    this.cameraMode = 'auto';
+    this.cameraTargetUser = null;
+    this.cameraFinishedLingerUntilMs = 0;
   }
 
   openLobby() {
     this.teardownRace();
+    this.resetCameraMode();
     const seed = (this.settings.seed ?? ((Date.now() & 0xffffffff) | 0)) >>> 0;
     this.currentSeed = seed;
     const rng = makeRng(seed);
@@ -203,6 +223,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     this.marbles.clear();
     this.finishOrder = [];
     this.track = null;
+    this.resetCameraMode();
   }
 
   addMarble(username) {
@@ -334,6 +355,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     if (this.state === 'finished') return;
     this.state = 'finished';
     this.raceEndMs = performance.now();
+    this.resetCameraMode();
     console.log(`[marbles-3d] race ended: ${reason}`);
   }
 
@@ -359,11 +381,61 @@ export class Marbles3DOverlay extends BaseOverlay {
     };
   }
 
-  updateCamera() {
-    if (!this.track || !this.renderer) return;
+  isInCatchBox(t) {
+    // Fallback finish trigger: a marble that flies over a wall and lands in
+    // the basin wouldn't necessarily advance its arclength to finishArclength
+    // (nearestArclength only searches a small window around the previous
+    // arclength, so an airborne marble can keep a stale progress metric).
+    const b = this.track?.catchBox?.bounds;
+    if (!b) return false;
+    const dx = t.x - b.center.x;
+    const dy = t.y - b.center.y;
+    const dz = t.z - b.center.z;
+    const lx = dx * b.side.x + dy * b.side.y + dz * b.side.z;
+    const ly = dx * b.up.x + dy * b.up.y + dz * b.up.z;
+    const lz = dx * b.forward.x + dy * b.forward.y + dz * b.forward.z;
+    const h = b.halfExtents;
+    return Math.abs(lx) <= h.x && Math.abs(ly) <= h.y && Math.abs(lz) <= h.z;
+  }
 
-    // Leader = unfinished marble with greatest arclength; fallback to any
-    // marble by arclength; fallback to looking at the start.
+  handleCameraCommand(cmd, arg) {
+    // !spectate without an arg is a no-op — spectate only targets a user.
+    if (cmd === '!spectate' && !arg) return;
+
+    const lowerArg = arg.toLowerCase();
+    if (!arg || lowerArg === 'auto' || lowerArg === 'leader') {
+      this.cameraMode = 'auto';
+      this.cameraTargetUser = null;
+      this.cameraFinishedLingerUntilMs = 0;
+      console.log('[marbles-3d] camera mode → auto');
+      return;
+    }
+    if (lowerArg === 'all') {
+      this.cameraMode = 'all';
+      this.cameraTargetUser = null;
+      this.cameraFinishedLingerUntilMs = 0;
+      console.log('[marbles-3d] camera mode → all');
+      return;
+    }
+
+    // Resolve username case-insensitively against the marbles Map. The Map
+    // key preserves the original username case (used for HUD display), so we
+    // walk keys to find a match rather than storing a lowercase alias table.
+    let resolved = null;
+    for (const key of this.marbles.keys()) {
+      if (key.toLowerCase() === lowerArg) { resolved = key; break; }
+    }
+    if (!resolved) return; // silent ignore on unknown target
+
+    this.cameraMode = 'user';
+    this.cameraTargetUser = resolved;
+    this.cameraFinishedLingerUntilMs = 0;
+    console.log(`[marbles-3d] camera mode → user (${resolved})`);
+  }
+
+  pickAutoLeader() {
+    // Unfinished marble with greatest arclength; fallback to any marble by
+    // arclength so we still have something to look at in the finish state.
     let leader = null;
     let leaderArc = -Infinity;
     for (const m of this.marbles.values()) {
@@ -381,23 +453,114 @@ export class Marbles3DOverlay extends BaseOverlay {
         }
       }
     }
+    return leader;
+  }
+
+  computeChaseFrame(marble) {
+    // Use the interpolated position so the camera target is smooth between
+    // physics ticks — otherwise the target steps at 60 Hz and the camera's
+    // position lerp inherits that judder.
+    const t = marble.interpPos;
+    const s = this.sampleAtArclength(marble.arclength);
+    const horizTan = new THREE.Vector3(s.tangent.x, 0, s.tangent.z);
+    if (horizTan.lengthSq() < 1e-6) horizTan.set(1, 0, 0);
+    else horizTan.normalize();
+    const camTarget = new THREE.Vector3(t.x, t.y, t.z)
+      .addScaledVector(horizTan, -5)
+      .add(new THREE.Vector3(0, 2.5, 0));
+    const lookAt = new THREE.Vector3(t.x, t.y + 0.3, t.z)
+      .addScaledVector(horizTan, 2);
+    return { camTarget, lookAt };
+  }
+
+  computeAllViewFrame() {
+    // Dynamic iso-ish framing: frame the active marble pack, oriented behind
+    // the leader's direction of travel so the camera isn't pointed at a wall
+    // when the track curves. Height/distance ≈ 0.4 gives a ~25° down-pitch.
+    const active = [];
+    for (const m of this.marbles.values()) if (!m.finished) active.push(m);
+    const marbles = active.length > 0 ? active : Array.from(this.marbles.values());
+
+    if (marbles.length === 0) {
+      const spawn = this.track.spawnPose.position;
+      return {
+        camTarget: new THREE.Vector3(spawn.x - 5, spawn.y + 3, 8),
+        lookAt: new THREE.Vector3(spawn.x, spawn.y, spawn.z)
+      };
+    }
+
+    const C = new THREE.Vector3();
+    for (const m of marbles) C.add(m.interpPos);
+    C.multiplyScalar(1 / marbles.length);
+
+    // Horizontal spread only — vertical spread is dominated by the track's
+    // descent and would make the camera lurch up/down as the pack crests bumps.
+    let R = 0;
+    for (const m of marbles) {
+      const dx = m.interpPos.x - C.x;
+      const dz = m.interpPos.z - C.z;
+      const r = Math.sqrt(dx * dx + dz * dz);
+      if (r > R) R = r;
+    }
+
+    const leader = this.pickAutoLeader();
+    const horizTan = new THREE.Vector3(1, 0, 0);
+    if (leader) {
+      const s = this.sampleAtArclength(leader.arclength);
+      horizTan.set(s.tangent.x, 0, s.tangent.z);
+      if (horizTan.lengthSq() < 1e-6) horizTan.set(1, 0, 0);
+      else horizTan.normalize();
+    }
+
+    const distance = Math.max(12, Math.min(60, R * 2.5 + 8));
+    const height = Math.max(7, Math.min(30, R * 1.0 + 6));
+    const camTarget = C.clone()
+      .addScaledVector(horizTan, -distance)
+      .add(new THREE.Vector3(0, height, 0));
+    const lookAt = C.clone().add(new THREE.Vector3(0, 0.5, 0));
+    return { camTarget, lookAt };
+  }
+
+  updateCamera() {
+    if (!this.track || !this.renderer) return;
+    const nowMs = performance.now();
+
+    let marbleToFollow = null;
+    let useAllView = false;
+
+    if (this.cameraMode === 'user') {
+      const m = this.marbles.get(this.cameraTargetUser);
+      if (!m) {
+        // Target left the race (e.g. teardown) — fall back to auto.
+        this.cameraMode = 'auto';
+        this.cameraTargetUser = null;
+        this.cameraFinishedLingerUntilMs = 0;
+      } else if (m.finished) {
+        if (this.cameraFinishedLingerUntilMs === 0) {
+          this.cameraFinishedLingerUntilMs = nowMs + 3000;
+        }
+        if (nowMs < this.cameraFinishedLingerUntilMs) {
+          marbleToFollow = m; // linger on the finish moment
+        } else {
+          this.cameraMode = 'auto';
+          this.cameraTargetUser = null;
+          this.cameraFinishedLingerUntilMs = 0;
+        }
+      } else {
+        marbleToFollow = m;
+      }
+    } else if (this.cameraMode === 'all') {
+      useAllView = true;
+    }
+
+    if (!marbleToFollow && !useAllView) marbleToFollow = this.pickAutoLeader();
 
     const cam = this.renderer.camera;
     let camTarget, lookAt;
-    if (leader) {
-      // Use the interpolated position so the camera target is smooth between
-      // physics ticks — otherwise the target steps at 60 Hz and the camera's
-      // position lerp inherits that judder.
-      const t = leader.interpPos;
-      const s = this.sampleAtArclength(leader.arclength);
-      const horizTan = new THREE.Vector3(s.tangent.x, 0, s.tangent.z);
-      if (horizTan.lengthSq() < 1e-6) horizTan.set(1, 0, 0);
-      else horizTan.normalize();
-      camTarget = new THREE.Vector3(t.x, t.y, t.z)
-        .addScaledVector(horizTan, -5)
-        .add(new THREE.Vector3(0, 2.5, 0));
-      lookAt = new THREE.Vector3(t.x, t.y + 0.3, t.z)
-        .addScaledVector(horizTan, 2);
+    if (useAllView) {
+      ({ camTarget, lookAt } = this.computeAllViewFrame());
+    } else if (marbleToFollow) {
+      ({ camTarget, lookAt } = this.computeChaseFrame(marbleToFollow));
     } else {
       const spawn = this.track.spawnPose.position;
       camTarget = new THREE.Vector3(spawn.x - 5, spawn.y + 3, 8);
@@ -407,6 +570,9 @@ export class Marbles3DOverlay extends BaseOverlay {
     // Lerp BOTH position and lookAt target. Without lerping the lookAt, the
     // camera orientation snaps to every frame's target even when its position
     // is smoothed, so a jittery target makes the view yaw-jerk on turns.
+    // The same lerp handles mode transitions — switching cameraMode only
+    // changes the target each frame, so the camera glides between modes
+    // instead of cutting.
     cam.position.lerp(camTarget, 0.08);
     if (!this._camLookAt) this._camLookAt = lookAt.clone();
     else this._camLookAt.lerp(lookAt, 0.1);
@@ -521,7 +687,8 @@ export class Marbles3DOverlay extends BaseOverlay {
     const worldPos = new THREE.Vector3(t.x, t.y, t.z);
     m.arclength = nearestArclength(this.track, worldPos, m.arclength);
 
-    if (!m.finished && this.state === 'racing' && m.arclength >= this.track.finishArclength) {
+    if (!m.finished && this.state === 'racing' &&
+        (m.arclength >= this.track.finishArclength || this.isInCatchBox(t))) {
       m.finished = true;
       m.finishTime = performance.now() - this.raceStartMs;
       this.finishOrder.push(m.username);

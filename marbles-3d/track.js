@@ -818,7 +818,18 @@ export function generateTrack(rng, settings) {
       .addScaledVector(cbWorldUp, cbNearWallHeight / 2),
     { x: cbWidth / 2, y: cbNearWallHeight / 2, z: cbThick / 2 });
 
-  const catchBox = { cuboids: cbCuboids };
+  // Interior volume of the basin (floor-top to wall-top, inside the wall
+   // faces). overlay.js uses this as a fallback finish trigger for marbles
+   // that fly over a wall and land in the basin without their arclength ever
+   // catching up to finishArclength.
+  const catchBoxBounds = {
+    center: cbFloorCenter.clone().addScaledVector(cbWorldUp, cbHeight / 2),
+    side: cbSide.clone(),
+    up: cbWorldUp.clone(),
+    forward: cbForward.clone(),
+    halfExtents: { x: cbWidth / 2, y: cbHeight / 2, z: cbDepth / 2 }
+  };
+  const catchBox = { cuboids: cbCuboids, bounds: catchBoxBounds };
 
   return {
     samples,
