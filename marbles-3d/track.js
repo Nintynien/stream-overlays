@@ -97,7 +97,12 @@ function arcTurn(rng, state, radius, totalAngle, dir, peakBankRad) {
     const offset = state.pos.clone().sub(center).applyAxisAngle(up, angle);
     const wp = center.clone().add(offset);
     wp.y -= totalDescent * fraction;
-    const bank = dir * peakBankRad * Math.sin(Math.PI * fraction);
+    // Bank the OUTSIDE of the curve upward so gravity pushes the marble
+    // into the turn (velodrome-style) instead of flinging it outward.
+    // For a left turn (dir=+1) the outside is +right/+Z, which we raise by
+    // applying a negative roll around the tangent; same logic mirrored for
+    // right turns.
+    const bank = -dir * peakBankRad * Math.sin(Math.PI * fraction);
     keypoints.push({ pos: wp, bank });
   }
   return { kind: dir > 0 ? 'turnLeft' : 'turnRight', keypoints };
@@ -282,14 +287,22 @@ function buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEn
 }
 
 function buildWallPlacements(samples, trackHalfWidth, wallHeight, wallThickness) {
+  // Place one wall cuboid per ~1m of arclength instead of one per sample
+  // (~0.4m). For straight and gently curving sections this is plenty dense
+  // to prevent marbles squeezing through seams, and it roughly thirds the
+  // static collider count, which Rapier's broadphase appreciates.
   const placements = [];
   const tmpMat = new THREE.Matrix4();
   const tmpPos = new THREE.Vector3();
-  for (let i = 0; i < samples.length - 1; i++) {
+  const sampleSpacing = samples.length > 1 ? samples[1].arclength - samples[0].arclength : 0.5;
+  const step = Math.max(1, Math.round(1.0 / sampleSpacing));
+  for (let i = 0; i < samples.length - 1; i += step) {
     const a = samples[i];
-    const b = samples[i + 1];
+    const endIdx = Math.min(samples.length - 1, i + step);
+    const b = samples[endIdx];
     const segLen = b.arclength - a.arclength;
-    const cuboidHalfLen = segLen * 0.55;
+    if (segLen < 1e-6) continue;
+    const cuboidHalfLen = segLen * 0.55; // 10% overlap between neighbors
     tmpMat.makeBasis(a.right, a.up, a.tangent);
     const quat = new THREE.Quaternion().setFromRotationMatrix(tmpMat);
     for (const side of [-1, 1]) {
@@ -458,10 +471,19 @@ export function generateTrack(rng, settings) {
   const finishArclength = Math.max(0, totalLength - 2);
   const finishIdx = Math.max(0, Math.min(samples.length - 1, Math.round(finishArclength / actualSpacing)));
   const finishSample = samples[finishIdx];
-  const finishMatrix = new THREE.Matrix4().makeBasis(finishSample.right, finishSample.up, finishSample.tangent);
+  // The finish platform is flat and level by construction, so build the marker
+  // frame from world-up rather than the sample's parallel-transported frame —
+  // parallel transport can carry twist from upstream turns/ramps and leave the
+  // line tilted around the tangent axis.
+  const finishTangentH = new THREE.Vector3(finishSample.tangent.x, 0, finishSample.tangent.z);
+  if (finishTangentH.lengthSq() < 1e-6) finishTangentH.set(1, 0, 0);
+  finishTangentH.normalize();
+  const finishUp = new THREE.Vector3(0, 1, 0);
+  const finishRight = new THREE.Vector3().crossVectors(finishTangentH, finishUp).normalize();
+  const finishMatrix = new THREE.Matrix4().makeBasis(finishRight, finishUp, finishTangentH);
   const finishQuat = new THREE.Quaternion().setFromRotationMatrix(finishMatrix);
   const finishMarker = {
-    position: finishSample.position.clone().addScaledVector(finishSample.up, wallHeight * 0.5),
+    position: finishSample.position.clone().addScaledVector(finishUp, wallHeight * 0.5),
     rotation: finishQuat,
     width: trackHalfWidth * 2,
     height: wallHeight
@@ -472,6 +494,60 @@ export function generateTrack(rng, settings) {
     position: spawnSample.position.clone().addScaledVector(spawnSample.up, 0.5),
     tangent: spawnSample.tangent.clone()
   };
+
+  // Catch basin past the finish: a big open-top box (floor + 3 walls, no near
+  // wall) that marbles fall into after rolling off the end of the track, so
+  // they don't fly off into the void.
+  const lastSample = samples[samples.length - 1];
+  const cbForward = new THREE.Vector3(lastSample.tangent.x, 0, lastSample.tangent.z);
+  if (cbForward.lengthSq() < 1e-6) cbForward.set(1, 0, 0);
+  cbForward.normalize();
+  const cbWorldUp = new THREE.Vector3(0, 1, 0);
+  const cbSide = new THREE.Vector3().crossVectors(cbWorldUp, cbForward).normalize();
+  const cbMat = new THREE.Matrix4().makeBasis(cbSide, cbWorldUp, cbForward);
+  const cbQuat = new THREE.Quaternion().setFromRotationMatrix(cbMat);
+  const cbRot = { x: cbQuat.x, y: cbQuat.y, z: cbQuat.z, w: cbQuat.w };
+
+  const cbWidth = settings.catchBoxWidth ?? 12;
+  const cbDepth = settings.catchBoxDepth ?? 12;
+  const cbHeight = settings.catchBoxHeight ?? 4;
+  const cbDrop = settings.catchBoxDropBelowTrack ?? 2;
+  const cbThick = 0.3;
+  const cbFloorCenter = lastSample.position.clone()
+    .addScaledVector(cbForward, cbDepth / 2)
+    .addScaledVector(cbWorldUp, -cbDrop);
+
+  const cbCuboids = [];
+  const pushCuboid = (center, half) => {
+    cbCuboids.push({
+      position: { x: center.x, y: center.y, z: center.z },
+      rotation: cbRot,
+      halfExtents: half
+    });
+  };
+  // Floor
+  pushCuboid(cbFloorCenter,
+    { x: cbWidth / 2, y: cbThick / 2, z: cbDepth / 2 });
+  // Left wall (-side)
+  pushCuboid(
+    cbFloorCenter.clone()
+      .addScaledVector(cbSide, -(cbWidth / 2 + cbThick / 2))
+      .addScaledVector(cbWorldUp, cbHeight / 2),
+    { x: cbThick / 2, y: cbHeight / 2, z: cbDepth / 2 });
+  // Right wall (+side)
+  pushCuboid(
+    cbFloorCenter.clone()
+      .addScaledVector(cbSide, cbWidth / 2 + cbThick / 2)
+      .addScaledVector(cbWorldUp, cbHeight / 2),
+    { x: cbThick / 2, y: cbHeight / 2, z: cbDepth / 2 });
+  // Far wall (+forward)
+  pushCuboid(
+    cbFloorCenter.clone()
+      .addScaledVector(cbForward, cbDepth / 2 + cbThick / 2)
+      .addScaledVector(cbWorldUp, cbHeight / 2),
+    { x: cbWidth / 2, y: cbHeight / 2, z: cbThick / 2 });
+
+  const catchBox = { cuboids: cbCuboids };
 
   return {
     samples,
@@ -487,6 +563,7 @@ export function generateTrack(rng, settings) {
     floorVertices: floor.vertices,
     floorIndices: floor.indices,
     wallPlacements,
+    catchBox,
     finishMarker,
     sampleSpacing: actualSpacing
   };
@@ -517,21 +594,37 @@ function distanceOf(keypoints) {
 // ========== Arclength lookup for marble tracking ==========
 
 export function nearestArclength(track, worldPos, hintArclength) {
+  // Returns a CONTINUOUS arclength by projecting worldPos onto the nearest
+  // segment between adjacent samples (rather than snapping to a sample vertex).
+  // This keeps the camera smooth — a discrete arclength steps every ~0.4m
+  // and makes the camera yaw lurch on turns.
   const samples = track.samples;
-  if (!samples || samples.length === 0) return 0;
+  if (!samples || samples.length < 2) return 0;
   const spacing = track.sampleSpacing ?? 0.5;
-  const hintIdx = Math.max(0, Math.min(samples.length - 1, Math.floor((hintArclength ?? 0) / spacing)));
+  const hintIdx = Math.max(0, Math.min(samples.length - 2, Math.floor((hintArclength ?? 0) / spacing)));
   const window = 32;
   const lo = Math.max(0, hintIdx - window);
-  const hi = Math.min(samples.length, hintIdx + window);
-  let bestIdx = hintIdx;
+  const hi = Math.min(samples.length - 1, hintIdx + window);
+
+  let bestArc = samples[hintIdx].arclength;
   let bestDistSq = Infinity;
+
   for (let i = lo; i < hi; i++) {
-    const d = samples[i].position.distanceToSquared(worldPos);
-    if (d < bestDistSq) {
-      bestDistSq = d;
-      bestIdx = i;
+    const a = samples[i].position;
+    const b = samples[i + 1].position;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const segLenSq = dx * dx + dy * dy + dz * dz;
+    if (segLenSq < 1e-9) continue;
+    const px = worldPos.x - a.x, py = worldPos.y - a.y, pz = worldPos.z - a.z;
+    let t = (px * dx + py * dy + pz * dz) / segLenSq;
+    t = Math.max(0, Math.min(1, t));
+    const cx = a.x + t * dx, cy = a.y + t * dy, cz = a.z + t * dz;
+    const ddx = worldPos.x - cx, ddy = worldPos.y - cy, ddz = worldPos.z - cz;
+    const distSq = ddx * ddx + ddy * ddy + ddz * ddz;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      bestArc = samples[i].arclength + t * (samples[i + 1].arclength - samples[i].arclength);
     }
   }
-  return samples[bestIdx].arclength;
+  return bestArc;
 }

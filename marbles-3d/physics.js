@@ -63,6 +63,21 @@ export class Physics {
       this.world.createCollider(collDesc, body);
       this.trackBodies.push(body);
     }
+
+    // Catch basin past the finish — corrals marbles that roll off the end.
+    if (track.catchBox) {
+      for (const c of track.catchBox.cuboids) {
+        const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+          .setTranslation(c.position.x, c.position.y, c.position.z)
+          .setRotation(c.rotation);
+        const body = this.world.createRigidBody(bodyDesc);
+        const collDesc = RAPIER.ColliderDesc.cuboid(c.halfExtents.x, c.halfExtents.y, c.halfExtents.z)
+          .setFriction(0.5)
+          .setRestitution(0.1);
+        this.world.createCollider(collDesc, body);
+        this.trackBodies.push(body);
+      }
+    }
   }
 
   clearTrack() {
@@ -104,7 +119,9 @@ export class Physics {
 
   step(realDtSeconds) {
     if (!this.ready) return 0;
-    this.accumulator += Math.min(realDtSeconds, FIXED_DT * MAX_SUBSTEPS);
+    // Cap the TOTAL accumulator, not just this frame's addition. Prevents a
+    // death spiral if physics ever falls behind realtime.
+    this.accumulator = Math.min(this.accumulator + realDtSeconds, FIXED_DT * MAX_SUBSTEPS);
     let stepsThisFrame = 0;
     while (this.accumulator >= FIXED_DT && stepsThisFrame < MAX_SUBSTEPS) {
       this.world.step(this.eventQueue);
@@ -112,6 +129,11 @@ export class Physics {
       stepsThisFrame++;
       this.stepCountWindow++;
     }
+    // Drain events each frame. We don't consume them (no collider has
+    // ActiveEvents set), but draining defends against any future addition
+    // that would otherwise accumulate events forever.
+    this.eventQueue.drainCollisionEvents(() => {});
+    this.eventQueue.drainContactForceEvents(() => {});
     const nowMs = performance.now();
     const elapsedMs = nowMs - this.stepWindowStartMs;
     if (elapsedMs >= 1000) {

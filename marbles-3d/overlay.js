@@ -157,6 +157,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     const cam = this.renderer.camera;
     cam.position.set(spawn.x - 5, spawn.y + 3, 8);
     cam.lookAt(spawn.x, spawn.y, spawn.z);
+    this._camLookAt = new THREE.Vector3(spawn.x, spawn.y, spawn.z);
 
     this.state = 'lobby';
   }
@@ -279,9 +280,25 @@ export class Marbles3DOverlay extends BaseOverlay {
   }
 
   sampleAtArclength(arclength) {
+    // Interpolates frame (position/tangent/up/right) between adjacent samples
+    // rather than snapping to a discrete sample. The camera depends on this
+    // and snapped frames make orientation step-lurch on turns.
+    const samples = this.track.samples;
     const spacing = this.track.sampleSpacing;
-    const idx = Math.max(0, Math.min(this.track.samples.length - 1, Math.floor(arclength / spacing)));
-    return this.track.samples[idx];
+    const f = Math.max(0, Math.min(samples.length - 1.0001, arclength / spacing));
+    const i0 = Math.floor(f);
+    const i1 = Math.min(samples.length - 1, i0 + 1);
+    const t = f - i0;
+    const s0 = samples[i0];
+    const s1 = samples[i1];
+    if (t < 1e-4 || i0 === i1) return s0;
+    return {
+      position: new THREE.Vector3().lerpVectors(s0.position, s1.position, t),
+      tangent: new THREE.Vector3().lerpVectors(s0.tangent, s1.tangent, t).normalize(),
+      up: new THREE.Vector3().lerpVectors(s0.up, s1.up, t).normalize(),
+      right: new THREE.Vector3().lerpVectors(s0.right, s1.right, t).normalize(),
+      arclength
+    };
   }
 
   updateCamera() {
@@ -312,11 +329,6 @@ export class Marbles3DOverlay extends BaseOverlay {
     if (leader) {
       const t = leader.body.translation();
       const s = this.sampleAtArclength(leader.arclength);
-      // Use the HORIZONTAL tangent for camera offset so the camera stays above
-      // and behind the marble regardless of track pitch. Using the raw 3D
-      // tangent would push the camera below the track on upslopes and into
-      // the sky on downslopes, and also make the view pitch with every
-      // ramp/valley the marble crosses.
       const horizTan = new THREE.Vector3(s.tangent.x, 0, s.tangent.z);
       if (horizTan.lengthSq() < 1e-6) horizTan.set(1, 0, 0);
       else horizTan.normalize();
@@ -331,9 +343,14 @@ export class Marbles3DOverlay extends BaseOverlay {
       lookAt = new THREE.Vector3(spawn.x, spawn.y, spawn.z);
     }
 
-    cam.position.lerp(camTarget, 0.1);
-    cam.up.set(0, 1, 0); // world-up: keeps view level even through banked curves in Phase 3
-    cam.lookAt(lookAt);
+    // Lerp BOTH position and lookAt target. Without lerping the lookAt, the
+    // camera orientation snaps to every frame's target even when its position
+    // is smoothed, so a jittery target makes the view yaw-jerk on turns.
+    cam.position.lerp(camTarget, 0.08);
+    if (!this._camLookAt) this._camLookAt = lookAt.clone();
+    else this._camLookAt.lerp(lookAt, 0.1);
+    cam.up.set(0, 1, 0); // world-up: keeps view level even through banked curves
+    cam.lookAt(this._camLookAt);
   }
 
   startLoop() {

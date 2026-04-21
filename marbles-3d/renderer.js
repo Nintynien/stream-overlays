@@ -5,22 +5,39 @@ export class Renderer {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
     this.renderer.setClearColor(0x000000, 0);
-    this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
     this.camera.position.set(6, 4, 8);
     this.camera.lookAt(0, 0, 0);
 
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x303030, 0.9);
+    // Low ambient + strong directional so surface normals (and therefore
+    // small bumps) actually shade differently instead of being washed out.
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x202028, 0.4);
     this.scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-    dir.position.set(5, 10, 4);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    // Keep the offset as a direction vector; render() repositions the light
+    // to follow the camera focus so shadows stay crisp over the long track.
+    this._sunOffset = new THREE.Vector3(6, 10, 3);
+    dir.position.copy(this._sunOffset);
+    dir.castShadow = true;
+    dir.shadow.mapSize.set(1024, 1024);
+    const sh = dir.shadow.camera;
+    sh.left = -16; sh.right = 16; sh.top = 16; sh.bottom = -16;
+    sh.near = 0.5; sh.far = 50;
+    dir.shadow.bias = -0.0005;
+    dir.shadow.normalBias = 0.02;
     this.scene.add(dir);
+    this.scene.add(dir.target);
+    this.sunLight = dir;
 
     this.marbleMeshes = new Map();
     this.trackMesh = null;
     this.finishMesh = null;
+    this.catchBoxMeshes = [];
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -29,7 +46,10 @@ export class Renderer {
   resize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    this.renderer.setPixelRatio(window.devicePixelRatio || 1);
+    // Cap pixel ratio so high-DPI monitors (laptops often 2.0, 4K sometimes
+    // more) don't quadruple our pixel-shading cost for marginal sharpness gain.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -41,6 +61,7 @@ export class Renderer {
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9, metalness: 0.05 });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.position.y = 0;
+    mesh.receiveShadow = true;
     this.scene.add(mesh);
 
     const grid = new THREE.GridHelper(halfSize * 2, 20, 0x555566, 0x33333a);
@@ -58,11 +79,24 @@ export class Renderer {
     // surface including the fillet curves and wall tops.
     const csCount = crossSectionPoints.length;
     const verts = new Float32Array(samples.length * csCount * 3);
+    const colors = new Float32Array(samples.length * csCount * 3);
     const indices = [];
+
+    // Alternating bands along arclength so bumps/ramps/turns visibly warp the
+    // stripes. Walls get a cooler/lighter tint so the U-profile reads as 3D
+    // instead of a flat ribbon.
+    const floorA = new THREE.Color(0x6a6a7a);
+    const floorB = new THREE.Color(0x3e3e48);
+    const wallC = new THREE.Color(0x8a94a6);
+    const stripePeriod = 1.5; // meters per stripe
+    const filletR = track.filletRadius ?? 0.5;
+    const wallThreshold = filletR + 0.01;
 
     const tmp = new THREE.Vector3();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
+      const stripe = Math.floor(s.arclength / stripePeriod) & 1;
+      const floorC = stripe === 0 ? floorA : floorB;
       for (let j = 0; j < csCount; j++) {
         const [lat, vert] = crossSectionPoints[j];
         tmp.copy(s.position).addScaledVector(s.right, lat).addScaledVector(s.up, vert);
@@ -70,6 +104,10 @@ export class Renderer {
         verts[base + 0] = tmp.x;
         verts[base + 1] = tmp.y;
         verts[base + 2] = tmp.z;
+        const c = vert > wallThreshold ? wallC : floorC;
+        colors[base + 0] = c.r;
+        colors[base + 1] = c.g;
+        colors[base + 2] = c.b;
       }
     }
 
@@ -87,16 +125,19 @@ export class Renderer {
 
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geom.setIndex(indices);
     geom.computeVertexNormals();
 
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x6a6a7a,
+      vertexColors: true,
       roughness: 0.75,
       metalness: 0.05,
       side: THREE.DoubleSide
     });
     this.trackMesh = new THREE.Mesh(geom, mat);
+    this.trackMesh.castShadow = true;
+    this.trackMesh.receiveShadow = true;
     this.scene.add(this.trackMesh);
 
     if (finishMarker) {
@@ -113,6 +154,27 @@ export class Renderer {
       this.scene.add(fMesh);
       this.finishMesh = fMesh;
     }
+
+    if (track.catchBox) {
+      const boxMat = new THREE.MeshStandardMaterial({
+        color: 0x5a5a64,
+        roughness: 0.8,
+        metalness: 0.05
+      });
+      for (const c of track.catchBox.cuboids) {
+        const geom = new THREE.BoxGeometry(
+          c.halfExtents.x * 2,
+          c.halfExtents.y * 2,
+          c.halfExtents.z * 2
+        );
+        const mesh = new THREE.Mesh(geom, boxMat);
+        mesh.position.set(c.position.x, c.position.y, c.position.z);
+        mesh.quaternion.set(c.rotation.x, c.rotation.y, c.rotation.z, c.rotation.w);
+        mesh.receiveShadow = true;
+        this.scene.add(mesh);
+        this.catchBoxMeshes.push(mesh);
+      }
+    }
   }
 
   clearTrackMesh() {
@@ -128,6 +190,15 @@ export class Renderer {
       this.finishMesh.material.dispose();
       this.finishMesh = null;
     }
+    if (this.catchBoxMeshes.length > 0) {
+      const material = this.catchBoxMeshes[0].material; // shared across cuboids
+      for (const mesh of this.catchBoxMeshes) {
+        this.scene.remove(mesh);
+        mesh.geometry.dispose();
+      }
+      material.dispose();
+      this.catchBoxMeshes = [];
+    }
   }
 
   addMarbleMesh(id, radius, colorCss) {
@@ -135,6 +206,8 @@ export class Renderer {
     const color = new THREE.Color(colorCss);
     const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.1 });
     const mesh = new THREE.Mesh(geom, mat);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.marbleMeshes.set(id, mesh);
     return mesh;
@@ -165,6 +238,16 @@ export class Renderer {
   }
 
   render() {
+    // Track is long (100m+); a fixed shadow camera either covers everything
+    // at low resolution or misses most of it. Keep the shadow frustum parked
+    // ~10m ahead of the camera so shadows stay crisp in the viewable area.
+    if (this.sunLight) {
+      const fwd = this.camera.getWorldDirection(new THREE.Vector3());
+      const focus = this.camera.position.clone().addScaledVector(fwd, 10);
+      this.sunLight.position.copy(focus).add(this._sunOffset);
+      this.sunLight.target.position.copy(focus);
+      this.sunLight.target.updateMatrixWorld();
+    }
     this.renderer.render(this.scene, this.camera);
   }
 }
