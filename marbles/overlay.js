@@ -570,15 +570,22 @@ export class MarblesOverlay extends BaseOverlay {
       let rescueSigned = -Infinity;
       for (const seg of segments) {
         if (seg.ny > -0.3) continue; // only rescue to ground-like surfaces
-        const minSx = Math.min(seg.x1, seg.x2);
-        const maxSx = Math.max(seg.x1, seg.x2);
-        if (m.x < minSx - 50 || m.x > maxSx + 50) continue;
-        const p = closestPointOnSegment(m.x, m.y, seg);
-        const signed = (m.x - p.x) * seg.nx + (m.y - p.y) * seg.ny;
+        const segDx = seg.x2 - seg.x1;
+        const segDy = seg.y2 - seg.y1;
+        const lenSq = segDx * segDx + segDy * segDy;
+        if (lenSq < 1e-6) continue;
+        const rawT = ((m.x - seg.x1) * segDx + (m.y - seg.y1) * segDy) / lenSq;
+        // Endpoint projections belong to the adjacent segment — skip, otherwise
+        // an airborne marble past a hill peak snaps to the peak (start of the
+        // next segment) instead of arcing onto the downslope.
+        if (rawT < 0 || rawT > 1) continue;
+        const px = seg.x1 + rawT * segDx;
+        const py = seg.y1 + rawT * segDy;
+        const signed = (m.x - px) * seg.nx + (m.y - py) * seg.ny;
         if (signed < -m.radius * 2 && signed > rescueSigned) {
           rescueSeg = seg;
-          rescuePx = p.x;
-          rescuePy = p.y;
+          rescuePx = px;
+          rescuePy = py;
           rescueSigned = signed;
         }
       }
