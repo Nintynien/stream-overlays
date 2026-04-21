@@ -55,6 +55,83 @@ export class Renderer {
     this.camera.updateProjectionMatrix();
   }
 
+  _getTrackTexture() {
+    if (this._trackTexture) return this._trackTexture;
+    const size = 512;
+    const c = document.createElement('canvas');
+    c.width = c.height = size;
+    const g = c.getContext('2d');
+
+    // Base concrete gray with per-pixel speckle. Per-pixel random noise tiles
+    // seamlessly — there's no low-frequency structure to reveal tile seams.
+    const img = g.createImageData(size, size);
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = 118 + (Math.random() - 0.5) * 36;
+      d[i] = n;
+      d[i + 1] = n;
+      d[i + 2] = n + 4; // faint cool tint
+      d[i + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+
+    // Darker aggregate specks. Draw each in a 3×3 wrap pattern so specks
+    // straddling an edge continue seamlessly into the neighboring tile.
+    g.fillStyle = 'rgba(30,30,40,0.55)';
+    for (let i = 0; i < 500; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const r = 0.6 + Math.random() * 1.8;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          g.beginPath();
+          g.arc(x + dx * size, y + dy * size, r, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    }
+    // A few brighter flecks so the surface isn't pure noise.
+    g.fillStyle = 'rgba(210,210,220,0.35)';
+    for (let i = 0; i < 120; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const r = 0.4 + Math.random() * 1.2;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          g.beginPath();
+          g.arc(x + dx * size, y + dy * size, r, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+    }
+
+    // Cross-wise expansion joints perpendicular to travel. Drawn at interior
+    // y positions so they don't clip at tile edges. TEX_REPEAT is 1m, so
+    // joints at 0.25 and 0.75 land every 0.5m in world space.
+    g.strokeStyle = 'rgba(18,18,26,0.9)';
+    g.lineWidth = 5;
+    g.beginPath();
+    g.moveTo(0, size * 0.25); g.lineTo(size, size * 0.25);
+    g.moveTo(0, size * 0.75); g.lineTo(size, size * 0.75);
+    g.stroke();
+    // Soft highlight just above each joint — mimics a bevel, helps the joint
+    // read as a groove rather than a painted line.
+    g.strokeStyle = 'rgba(200,200,215,0.18)';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(0, size * 0.25 - 4); g.lineTo(size, size * 0.25 - 4);
+    g.moveTo(0, size * 0.75 - 4); g.lineTo(size, size * 0.75 - 4);
+    g.stroke();
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
+    this._trackTexture = tex;
+    return tex;
+  }
+
   addGroundMesh(halfSize = 50, color = 0x3a3a44) {
     const geom = new THREE.PlaneGeometry(halfSize * 2, halfSize * 2);
     geom.rotateX(-Math.PI / 2);
@@ -80,34 +157,48 @@ export class Renderer {
     const csCount = crossSectionPoints.length;
     const verts = new Float32Array(samples.length * csCount * 3);
     const colors = new Float32Array(samples.length * csCount * 3);
+    const uvs = new Float32Array(samples.length * csCount * 2);
     const indices = [];
 
-    // Alternating bands along arclength so bumps/ramps/turns visibly warp the
-    // stripes. Walls get a cooler/lighter tint so the U-profile reads as 3D
-    // instead of a flat ribbon.
-    const floorA = new THREE.Color(0x6a6a7a);
-    const floorB = new THREE.Color(0x3e3e48);
-    const wallC = new THREE.Color(0x8a94a6);
-    const stripePeriod = 1.5; // meters per stripe
+    // Cumulative developed arclength across the cross-section, so the texture
+    // stretches evenly over the U-profile (fillets get proportional coverage,
+    // not squashed because they use more vertices than flat spans).
+    const csCumArc = new Float32Array(csCount);
+    for (let j = 1; j < csCount; j++) {
+      const [l0, v0] = crossSectionPoints[j - 1];
+      const [l1, v1] = crossSectionPoints[j];
+      csCumArc[j] = csCumArc[j - 1] + Math.hypot(l1 - l0, v1 - v0);
+    }
+
+    // Texture repeat period along the track (meters). Joints drawn at 0.25 and
+    // 0.75 of the texture give cross-joints every 0.5m of arclength — fine
+    // enough for 1m-wide bumps to visibly warp them.
+    const TEX_REPEAT = 1.0;
     const filletR = track.filletRadius ?? 0.5;
     const wallThreshold = filletR + 0.01;
+    // Walls multiply the texture by a cool shadow tint; the floor leaves the
+    // texture untouched so aggregate/joints read at full contrast.
+    const floorTint = new THREE.Color(0xffffff);
+    const wallTint = new THREE.Color(0xaab4c4);
 
     const tmp = new THREE.Vector3();
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i];
-      const stripe = Math.floor(s.arclength / stripePeriod) & 1;
-      const floorC = stripe === 0 ? floorA : floorB;
+      const vCoord = s.arclength / TEX_REPEAT;
       for (let j = 0; j < csCount; j++) {
         const [lat, vert] = crossSectionPoints[j];
         tmp.copy(s.position).addScaledVector(s.right, lat).addScaledVector(s.up, vert);
-        const base = (i * csCount + j) * 3;
-        verts[base + 0] = tmp.x;
-        verts[base + 1] = tmp.y;
-        verts[base + 2] = tmp.z;
-        const c = vert > wallThreshold ? wallC : floorC;
-        colors[base + 0] = c.r;
-        colors[base + 1] = c.g;
-        colors[base + 2] = c.b;
+        const base3 = (i * csCount + j) * 3;
+        verts[base3 + 0] = tmp.x;
+        verts[base3 + 1] = tmp.y;
+        verts[base3 + 2] = tmp.z;
+        const c = vert > wallThreshold ? wallTint : floorTint;
+        colors[base3 + 0] = c.r;
+        colors[base3 + 1] = c.g;
+        colors[base3 + 2] = c.b;
+        const base2 = (i * csCount + j) * 2;
+        uvs[base2 + 0] = csCumArc[j] / TEX_REPEAT;
+        uvs[base2 + 1] = vCoord;
       }
     }
 
@@ -126,13 +217,15 @@ export class Renderer {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
     geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     geom.setIndex(indices);
     geom.computeVertexNormals();
 
     const mat = new THREE.MeshStandardMaterial({
+      map: this._getTrackTexture(),
       vertexColors: true,
-      roughness: 0.75,
-      metalness: 0.05,
+      roughness: 0.78,
+      metalness: 0.04,
       side: THREE.DoubleSide
     });
     this.trackMesh = new THREE.Mesh(geom, mat);

@@ -42,10 +42,15 @@ export class Physics {
     this.clearTrack();
     // Floor: one trimesh collider from U-profile bottom strip.
     const floorBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    // Zero restitution on the floor: the trimesh is piecewise-flat, so every
-    // triangle boundary is a tiny crease. With any restitution the marble
-    // micro-bounces at each boundary and you see it as jitter.
-    const floorDesc = RAPIER.ColliderDesc.trimesh(track.floorVertices, track.floorIndices)
+    // FIX_INTERNAL_EDGES suppresses ghost contacts at shared triangle edges —
+    // without it, the ball hits the inside fillet on turns as if each slice
+    // boundary were a tiny wall. Zero restitution still matters so the piecewise
+    // flat surface doesn't produce micro-bounces at every triangle boundary.
+    const floorDesc = RAPIER.ColliderDesc.trimesh(
+      track.floorVertices,
+      track.floorIndices,
+      RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES
+    )
       .setFriction(0.55)
       .setRestitution(0.0);
     this.world.createCollider(floorDesc, floorBody);

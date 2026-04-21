@@ -468,9 +468,14 @@ export function generateTrack(rng, settings) {
   const floor = buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEndIdx);
   const wallPlacements = buildWallPlacements(samples, trackHalfWidth, wallHeight, wallThickness);
 
-  const finishArclength = Math.max(0, totalLength - 2);
-  const finishIdx = Math.max(0, Math.min(samples.length - 1, Math.round(finishArclength / actualSpacing)));
+  // Place finish detection and marker right at the end of the track — the
+  // catch basin past the end corrals marbles that roll off, so there's no
+  // reason to finish them early. Sampling at the very last sample also avoids
+  // residual spline curvature earlier in the finish platform that made the
+  // marker look non-perpendicular to the track.
+  const finishIdx = samples.length - 1;
   const finishSample = samples[finishIdx];
+  const finishArclength = finishSample.arclength;
   // The finish platform is flat and level by construction, so build the marker
   // frame from world-up rather than the sample's parallel-transported frame —
   // parallel transport can carry twist from upstream turns/ramps and leave the
