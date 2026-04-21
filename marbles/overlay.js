@@ -125,6 +125,26 @@ function pickWeighted(rng, pool) {
   return pool[pool.length - 1];
 }
 
+// Signed "outside" normal for a segment — the direction a marble gets pushed
+// to stay on the legal side. Picks the perpendicular with the more-negative
+// y component (up-screen), which is correct for every surface and wall in this
+// course except the right wall, overridden explicitly below.
+function segNormal(x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-6) return { nx: 0, ny: -1 };
+  const n1y = -dx / len;
+  const n2y = dx / len;
+  if (n1y <= n2y) return { nx: dy / len, ny: -dx / len };
+  return { nx: -dy / len, ny: dx / len };
+}
+
+function addSeg(segments, x1, y1, x2, y2, override) {
+  const n = override || segNormal(x1, y1, x2, y2);
+  segments.push({ x1, y1, x2, y2, nx: n.nx, ny: n.ny });
+}
+
 function generateCourse(rng, settings) {
   const courseHeight = settings.courseHeight;
   const minY = courseHeight * 0.2;
@@ -134,16 +154,16 @@ function generateCourse(rng, settings) {
   const targetLen = rng.range(settings.courseMinLength, settings.courseMaxLength);
 
   const segments = [];
-  segments.push({ x1: 0, y1: 0, x2: 0, y2: courseHeight }); // left wall
+  addSeg(segments, 0, 0, 0, courseHeight); // left wall (generic rule yields nx=1, ny=0)
   const startY = courseHeight * 0.45;
-  segments.push({ x1: 0, y1: startY, x2: startPlatformLen, y2: startY });
+  addSeg(segments, 0, startY, startPlatformLen, startY);
 
   let x = startPlatformLen;
   let y = startY;
 
   // Always open with a rampDown so marbles build momentum before any uphill.
   const opener = featRampDown(rng, x, y);
-  for (const s of opener.segments) segments.push(s);
+  for (const s of opener.segments) addSeg(segments, s.x1, s.y1, s.x2, s.y2);
   x = opener.endX;
   y = opener.endY;
   let lastKind = 'rampDown';
@@ -163,7 +183,7 @@ function generateCourse(rng, settings) {
       break;
     }
     if (!chosen) chosen = featFlat(rng, x, y);
-    for (const s of chosen.segments) segments.push(s);
+    for (const s of chosen.segments) addSeg(segments, s.x1, s.y1, s.x2, s.y2);
     x = chosen.endX;
     y = chosen.endY;
     lastKind = chosen.kind;
@@ -171,15 +191,15 @@ function generateCourse(rng, settings) {
   }
 
   // Finish platform
-  segments.push({ x1: x, y1: y, x2: x + finishPlatformLen, y2: y });
+  addSeg(segments, x, y, x + finishPlatformLen, y);
   const finishX = x + finishPlatformLen * 0.3;
   const courseWidth = x + finishPlatformLen;
 
-  // Right wall (prevents runaway marbles)
-  segments.push({ x1: courseWidth, y1: 0, x2: courseWidth, y2: courseHeight });
+  // Right wall (prevents runaway marbles) — generic rule would point right, override.
+  addSeg(segments, courseWidth, 0, courseWidth, courseHeight, { nx: -1, ny: 0 });
 
   // Bottom catch spanning entire course
-  segments.push({ x1: 0, y1: courseHeight - 30, x2: courseWidth, y2: courseHeight - 30 });
+  addSeg(segments, 0, courseHeight - 30, courseWidth, courseHeight - 30);
 
   return {
     segments,
@@ -203,17 +223,47 @@ function closestPointOnSegment(px, py, seg) {
 }
 
 function resolveSegmentCollision(m, seg, restitution) {
-  const p = closestPointOnSegment(m.x, m.y, seg);
-  const dx = m.x - p.x;
-  const dy = m.y - p.y;
+  const segDx = seg.x2 - seg.x1;
+  const segDy = seg.y2 - seg.y1;
+  const lenSq = segDx * segDx + segDy * segDy;
+  if (lenSq < 1e-6) return;
+  const rawT = ((m.x - seg.x1) * segDx + (m.y - seg.y1) * segDy) / lenSq;
+  const atEndpoint = rawT < 0 || rawT > 1;
+  const t = rawT < 0 ? 0 : (rawT > 1 ? 1 : rawT);
+  const px = seg.x1 + t * segDx;
+  const py = seg.y1 + t * segDy;
+  const dx = m.x - px;
+  const dy = m.y - py;
+
+  if (!atEndpoint) {
+    // Interior contact: push along the stored outside-normal using signed
+    // distance. Direction never flips, so a marble that has been squeezed
+    // past the segment still gets pushed back to the legal side instead of
+    // getting driven further underneath.
+    const signed = dx * seg.nx + dy * seg.ny;
+    if (signed >= m.radius) return;
+    const penetration = m.radius - signed;
+    m.x += seg.nx * penetration;
+    m.y += seg.ny * penetration;
+    const vdotn = m.vx * seg.nx + m.vy * seg.ny;
+    if (vdotn < 0) {
+      m.vx -= (1 + restitution) * vdotn * seg.nx;
+      m.vy -= (1 + restitution) * vdotn * seg.ny;
+    }
+    return;
+  }
+
+  // Endpoint contact: the segment end is effectively a circular cap, so the
+  // push is radial from the closest endpoint. Same as the original behavior —
+  // applying the stored normal here would spuriously fire on marbles that
+  // have merely rolled past the end of a platform.
   const distSq = dx * dx + dy * dy;
-  const rSq = m.radius * m.radius;
-  if (distSq >= rSq) return;
+  if (distSq >= m.radius * m.radius) return;
   const dist = Math.sqrt(distSq);
   let nx, ny;
   if (dist < 1e-6) {
-    nx = 0;
-    ny = -1;
+    nx = seg.nx;
+    ny = seg.ny;
   } else {
     nx = dx / dist;
     ny = dy / dist;
@@ -449,6 +499,7 @@ export class MarblesOverlay extends BaseOverlay {
     const courseHeight = this.course.courseHeight;
     const maxVx = this.settings.maxVx;
 
+    // Integration pass
     for (const m of this.marbles.values()) {
       if (m.finished) continue;
       m.vy += gravity * dt;
@@ -457,10 +508,34 @@ export class MarblesOverlay extends BaseOverlay {
       if (m.vx < -maxVx) m.vx = -maxVx;
       m.x += m.vx * dt;
       m.y += m.vy * dt;
+    }
 
-      for (const seg of segments) {
-        resolveSegmentCollision(m, seg, restitution);
+    // Contact resolution: iterate so stacked/squeezed contacts resolve instead
+    // of accumulating error. Segments come last each iteration so they have
+    // the final say over marble–marble pushes — a ball that gets shoved into
+    // the floor by a neighbor still gets popped back out before the next step.
+    const marbles = Array.from(this.marbles.values());
+    for (let iter = 0; iter < 3; iter++) {
+      for (let i = 0; i < marbles.length; i++) {
+        for (let j = i + 1; j < marbles.length; j++) {
+          if (marbles[i].finished && marbles[j].finished) continue;
+          resolveMarbleCollision(marbles[i], marbles[j], restitution);
+        }
       }
+      for (const m of marbles) {
+        if (m.finished) continue;
+        for (const seg of segments) {
+          resolveSegmentCollision(m, seg, restitution);
+        }
+      }
+    }
+
+    // Post-contact bookkeeping: hard clamps, finish detection, stuck-nudge,
+    // and a rescue teleport for any marble that still ended up clearly below
+    // a nearby surface despite the iterative solver.
+    const nowMs = performance.now();
+    for (const m of marbles) {
+      if (m.finished) continue;
 
       if (m.x - m.radius < 0) {
         m.x = m.radius;
@@ -471,19 +546,46 @@ export class MarblesOverlay extends BaseOverlay {
         m.vy = 0;
       }
 
-      if (!m.finished && m.x >= finishX) {
+      // Rescue teleport: if the marble is more than 2 radii past the legal
+      // side of some upward-facing surface segment near its x, snap it back
+      // onto that surface. Filters out walls (ny ~ 0) so rescue goes to the
+      // ground, not sideways into a wall.
+      let rescueSeg = null;
+      let rescuePx = 0, rescuePy = 0;
+      let rescueSigned = -Infinity;
+      for (const seg of segments) {
+        if (seg.ny > -0.3) continue; // only rescue to ground-like surfaces
+        const minSx = Math.min(seg.x1, seg.x2);
+        const maxSx = Math.max(seg.x1, seg.x2);
+        if (m.x < minSx - 50 || m.x > maxSx + 50) continue;
+        const p = closestPointOnSegment(m.x, m.y, seg);
+        const signed = (m.x - p.x) * seg.nx + (m.y - p.y) * seg.ny;
+        if (signed < -m.radius * 2 && signed > rescueSigned) {
+          rescueSeg = seg;
+          rescuePx = p.x;
+          rescuePy = p.y;
+          rescueSigned = signed;
+        }
+      }
+      if (rescueSeg) {
+        m.x = rescuePx + rescueSeg.nx * m.radius;
+        m.y = rescuePy + rescueSeg.ny * m.radius;
+        if (m.vy > 0) m.vy = 0;
+      }
+
+      if (m.x >= finishX) {
         m.finished = true;
         m.finishTime = performance.now() - this.raceStartMs;
         this.finishOrder.push(m.username);
         m.vx *= 0.3;
+        continue;
       }
 
       // Stuck-detection safety net: check every 2 s. If the marble hasn't
       // made 20 px of forward progress, nudge it — escalating with each
       // consecutive failure so even the steepest allowed upslope is cleared
       // within a few checks. A hop kicks in on the 2nd failure.
-      const nowMs = performance.now();
-      if (!m.finished && nowMs - m.stuckCheckMs >= 2000) {
+      if (nowMs - m.stuckCheckMs >= 2000) {
         if (m.x - m.stuckCheckX < 20) {
           m.stuckStreak += 1;
           const kick = 120 + m.stuckStreak * 100; // 220, 320, 420, ... capped at maxVx
@@ -496,14 +598,6 @@ export class MarblesOverlay extends BaseOverlay {
         }
         m.stuckCheckX = m.x;
         m.stuckCheckMs = nowMs;
-      }
-    }
-
-    const marbles = Array.from(this.marbles.values());
-    for (let i = 0; i < marbles.length; i++) {
-      for (let j = i + 1; j < marbles.length; j++) {
-        if (marbles[i].finished && marbles[j].finished) continue;
-        resolveMarbleCollision(marbles[i], marbles[j], restitution);
       }
     }
   }
