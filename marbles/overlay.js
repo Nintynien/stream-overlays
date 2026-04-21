@@ -556,43 +556,34 @@ export class MarblesOverlay extends BaseOverlay {
         m.x = m.radius;
         if (m.vx < 0) m.vx = -m.vx * restitution;
       }
-      if (m.y > courseHeight) {
-        m.y = courseHeight - 60;
-        m.vy = 0;
-      }
 
-      // Rescue teleport: if the marble is more than 2 radii past the legal
-      // side of some upward-facing surface segment near its x, snap it back
-      // onto that surface. Filters out walls (ny ~ 0) so rescue goes to the
-      // ground, not sideways into a wall.
-      let rescueSeg = null;
-      let rescuePx = 0, rescuePy = 0;
-      let rescueSigned = -Infinity;
-      for (const seg of segments) {
-        if (seg.ny > -0.3) continue; // only rescue to ground-like surfaces
-        const segDx = seg.x2 - seg.x1;
-        const segDy = seg.y2 - seg.y1;
-        const lenSq = segDx * segDx + segDy * segDy;
-        if (lenSq < 1e-6) continue;
-        const rawT = ((m.x - seg.x1) * segDx + (m.y - seg.y1) * segDy) / lenSq;
-        // Endpoint projections belong to the adjacent segment — skip, otherwise
-        // an airborne marble past a hill peak snaps to the peak (start of the
-        // next segment) instead of arcing onto the downslope.
-        if (rawT < 0 || rawT > 1) continue;
-        const px = seg.x1 + rawT * segDx;
-        const py = seg.y1 + rawT * segDy;
-        const signed = (m.x - px) * seg.nx + (m.y - py) * seg.ny;
-        if (signed < -m.radius * 2 && signed > rescueSigned) {
-          rescueSeg = seg;
-          rescuePx = px;
-          rescuePy = py;
-          rescueSigned = signed;
+      // Rescue teleport: if the marble reaches the bottom catch, it's fallen
+      // off the track — snap it back up onto the actual track surface at its
+      // current x. The catch itself is a ground-like segment but sits at the
+      // bottom, so picking the topmost (lowest-y) surface at m.x naturally
+      // lands on the real track above.
+      if (m.y + m.radius >= courseHeight - 30) {
+        let rescueSeg = null;
+        let rescueSegY = Infinity;
+        for (const seg of segments) {
+          if (seg.ny > -0.3) continue;
+          const minSx = Math.min(seg.x1, seg.x2);
+          const maxSx = Math.max(seg.x1, seg.x2);
+          if (m.x < minSx || m.x > maxSx) continue;
+          const segDx = seg.x2 - seg.x1;
+          if (Math.abs(segDx) < 1e-6) continue;
+          const tAtX = (m.x - seg.x1) / segDx;
+          const segY = seg.y1 + tAtX * (seg.y2 - seg.y1);
+          if (segY < rescueSegY) {
+            rescueSegY = segY;
+            rescueSeg = seg;
+          }
         }
-      }
-      if (rescueSeg) {
-        m.x = rescuePx + rescueSeg.nx * m.radius;
-        m.y = rescuePy + rescueSeg.ny * m.radius;
-        if (m.vy > 0) m.vy = 0;
+        if (rescueSeg) {
+          m.x = m.x + rescueSeg.nx * m.radius;
+          m.y = rescueSegY + rescueSeg.ny * m.radius;
+          if (m.vy > 0) m.vy = 0;
+        }
       }
 
       if (m.x >= finishX) {
