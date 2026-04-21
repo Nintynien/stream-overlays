@@ -286,44 +286,6 @@ function buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEn
   return { vertices, indices };
 }
 
-function buildWallPlacements(samples, trackHalfWidth, wallHeight, wallThickness) {
-  // Place one wall cuboid per ~1m of arclength instead of one per sample
-  // (~0.4m). For straight and gently curving sections this is plenty dense
-  // to prevent marbles squeezing through seams, and it roughly thirds the
-  // static collider count, which Rapier's broadphase appreciates.
-  const placements = [];
-  const tmpMat = new THREE.Matrix4();
-  const tmpPos = new THREE.Vector3();
-  const sampleSpacing = samples.length > 1 ? samples[1].arclength - samples[0].arclength : 0.5;
-  const step = Math.max(1, Math.round(1.0 / sampleSpacing));
-  for (let i = 0; i < samples.length - 1; i += step) {
-    const a = samples[i];
-    const endIdx = Math.min(samples.length - 1, i + step);
-    const b = samples[endIdx];
-    const segLen = b.arclength - a.arclength;
-    if (segLen < 1e-6) continue;
-    const cuboidHalfLen = segLen * 0.55; // 10% overlap between neighbors
-    tmpMat.makeBasis(a.right, a.up, a.tangent);
-    const quat = new THREE.Quaternion().setFromRotationMatrix(tmpMat);
-    for (const side of [-1, 1]) {
-      tmpPos.copy(a.position)
-        .addScaledVector(a.tangent, segLen * 0.5)
-        .addScaledVector(a.right, side * (trackHalfWidth + wallThickness * 0.5))
-        .addScaledVector(a.up, wallHeight * 0.5);
-      placements.push({
-        position: { x: tmpPos.x, y: tmpPos.y, z: tmpPos.z },
-        rotation: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
-        halfExtents: {
-          x: wallThickness * 0.5,
-          y: wallHeight * 0.5,
-          z: cuboidHalfLen
-        }
-      });
-    }
-  }
-  return placements;
-}
-
 // ========== Main entry ==========
 
 export function generateTrack(rng, settings) {
@@ -337,10 +299,9 @@ export function generateTrack(rng, settings) {
   const maxY = settings.courseMaxY ?? 25;
   const trackHalfWidth = settings.trackHalfWidth ?? 1.5;
   const wallHeight = settings.wallHeight ?? 1.2;
-  const wallThickness = settings.wallThickness ?? 0.2;
-  const sampleSpacing = settings.sampleSpacing ?? 0.4;
+  const sampleSpacing = settings.sampleSpacing ?? 0.25;
   const filletRadius = settings.filletRadius ?? 0.5;
-  const filletSegments = settings.filletSegments ?? 4;
+  const filletSegments = settings.filletSegments ?? 8;
   const yawClamp = (settings.yawClampDeg ?? 135) * Math.PI / 180;
 
   // Start platform: multiple colinear keypoints keep the Catmull-Rom dead flat
@@ -460,13 +421,15 @@ export function generateTrack(rng, settings) {
   }
 
   // Full U-profile cross-section: wall top → fillet → floor → fillet → wall top.
-  // The trimesh uses the inside slice (no wall tops); the visual mesh uses it all.
+  // The physics trimesh and the visual mesh both use the whole profile — the
+  // walls are part of the trimesh (one continuous surface from wall top, down
+  // the vertical face, around the fillet, across the floor, and back up) so
+  // the fillet-to-wall transition has no discretization seam.
   const crossSectionPoints = fullProfilePoints(trackHalfWidth, wallHeight, filletRadius, filletSegments);
-  const insideStartIdx = 1;
-  const insideEndIdx = crossSectionPoints.length - 1;
+  const insideStartIdx = 0;
+  const insideEndIdx = crossSectionPoints.length;
 
   const floor = buildFloorTrimesh(samples, crossSectionPoints, insideStartIdx, insideEndIdx);
-  const wallPlacements = buildWallPlacements(samples, trackHalfWidth, wallHeight, wallThickness);
 
   // Place finish detection and marker right at the end of the track — the
   // catch basin past the end corrals marbles that roll off, so there's no
@@ -484,7 +447,10 @@ export function generateTrack(rng, settings) {
   if (finishTangentH.lengthSq() < 1e-6) finishTangentH.set(1, 0, 0);
   finishTangentH.normalize();
   const finishUp = new THREE.Vector3(0, 1, 0);
-  const finishRight = new THREE.Vector3().crossVectors(finishTangentH, finishUp).normalize();
+  // right = up × tangent so (right, up, tangent) is a right-handed basis —
+  // makeBasis + setFromRotationMatrix silently corrupts the quaternion on a
+  // left-handed (reflection) matrix, which was tilting the finish plane.
+  const finishRight = new THREE.Vector3().crossVectors(finishUp, finishTangentH).normalize();
   const finishMatrix = new THREE.Matrix4().makeBasis(finishRight, finishUp, finishTangentH);
   const finishQuat = new THREE.Quaternion().setFromRotationMatrix(finishMatrix);
   const finishMarker = {
@@ -500,9 +466,10 @@ export function generateTrack(rng, settings) {
     tangent: spawnSample.tangent.clone()
   };
 
-  // Catch basin past the finish: a big open-top box (floor + 3 walls, no near
-  // wall) that marbles fall into after rolling off the end of the track, so
-  // they don't fly off into the void.
+  // Catch basin past the finish: a big open-top box (floor + 4 walls) that
+  // marbles fall into after rolling off the end of the track. The near wall
+  // (track-facing side) is half-height so marbles falling off the track clear
+  // it while marbles that bounce backward inside can't escape over it.
   const lastSample = samples[samples.length - 1];
   const cbForward = new THREE.Vector3(lastSample.tangent.x, 0, lastSample.tangent.z);
   if (cbForward.lengthSq() < 1e-6) cbForward.set(1, 0, 0);
@@ -551,6 +518,15 @@ export function generateTrack(rng, settings) {
       .addScaledVector(cbForward, cbDepth / 2 + cbThick / 2)
       .addScaledVector(cbWorldUp, cbHeight / 2),
     { x: cbWidth / 2, y: cbHeight / 2, z: cbThick / 2 });
+  // Near wall (-forward): short enough that its top stays below the track
+  // surface (0.5m clearance) so marbles rolling off drop in cleanly, tall
+  // enough that marbles bouncing around inside can't roll back out.
+  const cbNearWallHeight = Math.max(0.5, cbDrop - 0.5);
+  pushCuboid(
+    cbFloorCenter.clone()
+      .addScaledVector(cbForward, -(cbDepth / 2 + cbThick / 2))
+      .addScaledVector(cbWorldUp, cbNearWallHeight / 2),
+    { x: cbWidth / 2, y: cbNearWallHeight / 2, z: cbThick / 2 });
 
   const catchBox = { cuboids: cbCuboids };
 
@@ -561,13 +537,11 @@ export function generateTrack(rng, settings) {
     spawnPose,
     trackHalfWidth,
     wallHeight,
-    wallThickness,
     filletRadius,
     filletSegments,
     crossSectionPoints, // renderer uses this to extrude the visible U-profile
     floorVertices: floor.vertices,
     floorIndices: floor.indices,
-    wallPlacements,
     catchBox,
     finishMarker,
     sampleSpacing: actualSpacing

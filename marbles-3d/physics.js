@@ -40,34 +40,23 @@ export class Physics {
 
   buildTrack(track) {
     this.clearTrack();
-    // Floor: one trimesh collider from U-profile bottom strip.
-    const floorBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
-    // FIX_INTERNAL_EDGES suppresses ghost contacts at shared triangle edges —
-    // without it, the ball hits the inside fillet on turns as if each slice
-    // boundary were a tiny wall. Zero restitution still matters so the piecewise
-    // flat surface doesn't produce micro-bounces at every triangle boundary.
-    const floorDesc = RAPIER.ColliderDesc.trimesh(
+    // One trimesh for the whole U-profile including walls. FIX_INTERNAL_EDGES
+    // suppresses ghost contacts at shared triangle edges — without it, each
+    // slice boundary on the fillet feels like a tiny wall. Zero restitution
+    // keeps the piecewise-flat surface from producing micro-bounces at triangle
+    // boundaries. Friction is a compromise: walls want lower friction than the
+    // floor to let the marble slip sideways in turns, but one trimesh can only
+    // carry one value.
+    const trackBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+    const trackDesc = RAPIER.ColliderDesc.trimesh(
       track.floorVertices,
       track.floorIndices,
-      RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES
+      RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES | RAPIER.TriMeshFlags.MERGE_DUPLICATE_VERTICES
     )
-      .setFriction(0.55)
+      .setFriction(0.45)
       .setRestitution(0.0);
-    this.world.createCollider(floorDesc, floorBody);
-    this.trackBodies.push(floorBody);
-
-    // Walls: chain of overlapping cuboids (safer for fast spheres than trimesh).
-    for (const p of track.wallPlacements) {
-      const bodyDesc = RAPIER.RigidBodyDesc.fixed()
-        .setTranslation(p.position.x, p.position.y, p.position.z)
-        .setRotation(p.rotation);
-      const body = this.world.createRigidBody(bodyDesc);
-      const collDesc = RAPIER.ColliderDesc.cuboid(p.halfExtents.x, p.halfExtents.y, p.halfExtents.z)
-        .setFriction(0.35)
-        .setRestitution(0.05);
-      this.world.createCollider(collDesc, body);
-      this.trackBodies.push(body);
-    }
+    this.world.createCollider(trackDesc, trackBody);
+    this.trackBodies.push(trackBody);
 
     // Catch basin past the finish — corrals marbles that roll off the end.
     if (track.catchBox) {

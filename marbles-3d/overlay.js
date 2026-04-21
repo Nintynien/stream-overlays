@@ -106,10 +106,13 @@ export class Marbles3DOverlay extends BaseOverlay {
     console.log('[marbles-3d] loop started');
   }
 
-  // Demo mode runs the normal chat flow end-to-end with one bot racer.
+  // Demo mode runs the normal chat flow end-to-end with a handful of bot racers.
+  // Random suffix on each name so their hashed colors differ run-to-run.
   startPhase1Demo() {
     this.openLobby();
-    this.addMarble('demo_runner');
+    for (let i = 1; i <= 5; i++) {
+      this.addMarble(`demo_${i}_${Math.random().toString(36).slice(2, 8)}`);
+    }
     this.startCountdown();
   }
 
@@ -599,6 +602,8 @@ export class Marbles3DOverlay extends BaseOverlay {
   }
 
   drawCountdownHud(ctx, vw, vh, nowMs) {
+    this.drawMarbleLabels(ctx, vw, vh);
+
     const elapsed = nowMs - this.countdownStartMs;
     const remaining = Math.max(0, this.settings.countdownMs - elapsed);
     const secsLeft = Math.ceil(remaining / 1000);
@@ -615,7 +620,38 @@ export class Marbles3DOverlay extends BaseOverlay {
     ctx.fillText(label, vw / 2, vh / 2);
   }
 
+  // Project each marble's world position to screen space and draw its name
+  // above it. Runs in both countdown (to identify balls at the line) and
+  // racing states.
+  drawMarbleLabels(ctx, vw, vh) {
+    if (!this.settings.showNames) return;
+    if (!this.renderer || !this.renderer.camera) return;
+    const camera = this.renderer.camera;
+    const radius = this.settings.marbleRadius;
+    const tmp = new THREE.Vector3();
+    ctx.font = 'bold 13px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    for (const m of this.marbles.values()) {
+      const t = m.body.translation();
+      tmp.set(t.x, t.y + radius + 0.25, t.z);
+      tmp.project(camera);
+      if (tmp.z <= -1 || tmp.z >= 1) continue;
+      if (tmp.x < -1.1 || tmp.x > 1.1) continue;
+      const sx = (tmp.x * 0.5 + 0.5) * vw;
+      const sy = (1 - (tmp.y * 0.5 + 0.5)) * vh;
+      const name = m.username.length > 16 ? m.username.slice(0, 15) + '…' : m.username;
+      const tw = ctx.measureText(name).width;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(sx - tw / 2 - 5, sy - 15, tw + 10, 18);
+      ctx.fillStyle = m.color;
+      ctx.fillText(name, sx, sy - 2);
+    }
+  }
+
   drawRacingHud(ctx, vw, vh, nowMs) {
+    this.drawMarbleLabels(ctx, vw, vh);
+
     const elapsed = nowMs - this.raceStartMs;
     const secs = Math.floor(elapsed / 1000);
     const mm = String(Math.floor(secs / 60)).padStart(2, '0');
