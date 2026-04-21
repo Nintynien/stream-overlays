@@ -40,7 +40,7 @@ function colorFromUsername(u) {
 
 // ========== Course feature palette ==========
 function featFlat(rng, x, y) {
-  const len = rng.range(400, 900);
+  const len = rng.range(250, 550);
   return {
     segments: [{ x1: x, y1: y, x2: x + len, y2: y }],
     endX: x + len, endY: y, kind: 'flat'
@@ -48,8 +48,8 @@ function featFlat(rng, x, y) {
 }
 
 function featRampDown(rng, x, y) {
-  const len = rng.range(300, 600);
-  const drop = rng.range(80, 220);
+  const len = rng.range(350, 700);
+  const drop = rng.range(250, 500);
   return {
     segments: [{ x1: x, y1: y, x2: x + len, y2: y + drop }],
     endX: x + len, endY: y + drop, kind: 'rampDown'
@@ -58,7 +58,7 @@ function featRampDown(rng, x, y) {
 
 function featRampUp(rng, x, y) {
   const len = rng.range(450, 700);
-  const rise = rng.range(30, 80);
+  const rise = rng.range(40, 130);
   return {
     segments: [{ x1: x, y1: y, x2: x + len, y2: y - rise }],
     endX: x + len, endY: y - rise, kind: 'rampUp'
@@ -67,7 +67,7 @@ function featRampUp(rng, x, y) {
 
 function featBump(rng, x, y) {
   const w = rng.range(100, 180);
-  const h = rng.range(30, 70);
+  const h = rng.range(50, 120);
   return {
     segments: [
       { x1: x, y1: y, x2: x + w / 2, y2: y - h },
@@ -79,7 +79,7 @@ function featBump(rng, x, y) {
 
 function featValley(rng, x, y) {
   const w = rng.range(240, 480);
-  const d = rng.range(60, 180);
+  const d = rng.range(40, 110);
   return {
     segments: [
       { x1: x, y1: y, x2: x + w / 2, y2: y + d },
@@ -92,7 +92,7 @@ function featValley(rng, x, y) {
 function featStairsDown(rng, x, y) {
   const count = rng.rangeInt(3, 5);
   const stepW = rng.range(60, 110);
-  const stepH = rng.range(25, 55);
+  const stepH = rng.range(45, 90);
   const segments = [];
   let cx = x, cy = y;
   for (let i = 0; i < count; i++) {
@@ -111,7 +111,7 @@ const FEATURE_POOL = [
   { fn: featRampDown, weight: 3 },
   { fn: featRampUp, weight: 1.5 },
   { fn: featBump, weight: 1.5 },
-  { fn: featValley, weight: 2.5 },
+  { fn: featValley, weight: 1.2 },
   { fn: featStairsDown, weight: 1 }
 ];
 
@@ -147,15 +147,15 @@ function addSeg(segments, x1, y1, x2, y2, override) {
 
 function generateCourse(rng, settings) {
   const courseHeight = settings.courseHeight;
-  const minY = courseHeight * 0.2;
-  const maxY = courseHeight * 0.75;
+  const minY = courseHeight * 0.05;
+  const maxY = courseHeight * 0.92;
   const startPlatformLen = 300;
   const finishPlatformLen = 400;
   const targetLen = rng.range(settings.courseMinLength, settings.courseMaxLength);
 
   const segments = [];
   addSeg(segments, 0, 0, 0, courseHeight); // left wall (generic rule yields nx=1, ny=0)
-  const startY = courseHeight * 0.45;
+  const startY = courseHeight * 0.08;
   addSeg(segments, 0, startY, startPlatformLen, startY);
 
   let x = startPlatformLen;
@@ -174,7 +174,18 @@ function generateCourse(rng, settings) {
     for (let attempt = 0; attempt < 20; attempt++) {
       const candidate = pickWeighted(rng, FEATURE_POOL);
       const trial = candidate.fn(rng, x, y);
-      if (trial.endY < minY || trial.endY > maxY) continue;
+      // Check every vertex in the feature, not just its endpoint — a valley or
+      // bump can dip/spike outside bounds mid-feature even when both endpoints
+      // are legal. Otherwise a valley starting near maxY could punch into the
+      // bottom catch.
+      let inBounds = true;
+      for (const s of trial.segments) {
+        if (s.y1 < minY || s.y1 > maxY || s.y2 < minY || s.y2 > maxY) {
+          inBounds = false;
+          break;
+        }
+      }
+      if (!inBounds) continue;
       // rampUp only after a downhill feature, so marbles arrive with momentum
       if (trial.kind === 'rampUp' && lastKind !== 'rampDown' && lastKind !== 'stairsDown') continue;
       if (trial.kind === 'rampUp' && y < minY + 80) continue;
@@ -193,6 +204,7 @@ function generateCourse(rng, settings) {
   // Finish platform
   addSeg(segments, x, y, x + finishPlatformLen, y);
   const finishX = x + finishPlatformLen * 0.3;
+  const finishY = y;
   const courseWidth = x + finishPlatformLen;
 
   // Right wall (prevents runaway marbles) — generic rule would point right, override.
@@ -204,6 +216,7 @@ function generateCourse(rng, settings) {
   return {
     segments,
     finishX,
+    finishY,
     spawnX: 40,
     spawnY: startY - 40,
     courseWidth,
@@ -316,7 +329,8 @@ export class MarblesOverlay extends BaseOverlay {
       seed: config.settings?.seed,
       courseMinLength: config.settings?.courseMinLength ?? 8000,
       courseMaxLength: config.settings?.courseMaxLength ?? 14000,
-      courseHeight: config.settings?.courseHeight ?? 1080,
+      courseHeight: config.settings?.courseHeight ?? 3000,
+      viewportHeight: config.settings?.viewportHeight ?? 1080,
       gravity: config.settings?.gravity ?? 900,
       startImpulse: config.settings?.startImpulse ?? 250,
       boostImpulse: config.settings?.boostImpulse ?? 180,
@@ -341,7 +355,7 @@ export class MarblesOverlay extends BaseOverlay {
     this.state = 'idle';
     this.marbles = new Map();
     this.course = null;
-    this.camera = { x: 0 };
+    this.camera = { x: 0, y: 0 };
     this.currentSeed = null;
 
     this.countdownStartMs = 0;
@@ -394,6 +408,7 @@ export class MarblesOverlay extends BaseOverlay {
     this.marbles.clear();
     this.finishOrder = [];
     this.camera.x = 0;
+    this.camera.y = 0;
     const seed = (this.settings.seed ?? ((Date.now() & 0xffffffff) | 0)) >>> 0;
     this.currentSeed = seed;
     const rng = makeRng(seed);
@@ -588,7 +603,7 @@ export class MarblesOverlay extends BaseOverlay {
       if (nowMs - m.stuckCheckMs >= 2000) {
         if (m.x - m.stuckCheckX < 20) {
           m.stuckStreak += 1;
-          const kick = 120 + m.stuckStreak * 100; // 220, 320, 420, ... capped at maxVx
+          const kick = 200 + m.stuckStreak * 120; // 320, 440, 560, ... capped at maxVx
           m.vx = Math.min(m.vx + kick, this.settings.maxVx);
           if (m.stuckStreak >= 2) {
             m.vy = Math.min(m.vy, 0) - 180; // small hop to clear a crest
@@ -605,21 +620,34 @@ export class MarblesOverlay extends BaseOverlay {
   updateCamera(dt) {
     if (!this.course) return;
     let leaderX = -Infinity;
+    let leaderY = this.course.spawnY;
     let hasUnfinished = false;
     for (const m of this.marbles.values()) {
       if (m.finished) continue;
       hasUnfinished = true;
-      if (m.x > leaderX) leaderX = m.x;
+      if (m.x > leaderX) {
+        leaderX = m.x;
+        leaderY = m.y;
+      }
     }
-    if (!hasUnfinished) leaderX = this.course.finishX;
-    const scale = window.innerHeight / this.course.courseHeight;
+    if (!hasUnfinished) {
+      leaderX = this.course.finishX;
+      leaderY = this.course.finishY;
+    }
+    const viewWorldH = this.settings.viewportHeight;
+    const scale = window.innerHeight / viewWorldH;
     const viewWorldW = window.innerWidth / scale;
     const targetCameraX = Math.max(0, Math.min(
       Math.max(0, this.course.courseWidth - viewWorldW),
       leaderX - viewWorldW * this.settings.cameraLeadFraction
     ));
+    const targetCameraY = Math.max(0, Math.min(
+      Math.max(0, this.course.courseHeight - viewWorldH),
+      leaderY - viewWorldH * 0.5
+    ));
     const t = 1 - Math.pow(1 - this.settings.cameraLerp, Math.max(1, dt * 60));
     this.camera.x += (targetCameraX - this.camera.x) * t;
+    this.camera.y += (targetCameraY - this.camera.y) * t;
   }
 
   endRace(reason) {
@@ -640,8 +668,8 @@ export class MarblesOverlay extends BaseOverlay {
     ctx.fillRect(0, 0, cw, ch);
 
     if (this.course) {
-      const scale = ch / this.course.courseHeight;
-      ctx.setTransform(scale, 0, 0, scale, -this.camera.x * scale, 0);
+      const scale = ch / this.settings.viewportHeight;
+      ctx.setTransform(scale, 0, 0, scale, -this.camera.x * scale, -this.camera.y * scale);
       this.drawCourse(ctx, scale);
       this.drawMarbles(ctx);
     }
@@ -654,8 +682,11 @@ export class MarblesOverlay extends BaseOverlay {
   drawCourse(ctx, scale) {
     if (!this.course) return;
     const viewWorldW = this.canvas.width / scale;
+    const viewWorldH = this.canvas.height / scale;
     const leftX = this.camera.x - 50;
     const rightX = this.camera.x + viewWorldW + 50;
+    const topY = this.camera.y - 50;
+    const bottomY = this.camera.y + viewWorldH + 50;
 
     ctx.strokeStyle = '#888';
     ctx.lineWidth = 4;
@@ -665,12 +696,16 @@ export class MarblesOverlay extends BaseOverlay {
       const minSegX = Math.min(seg.x1, seg.x2);
       const maxSegX = Math.max(seg.x1, seg.x2);
       if (maxSegX < leftX || minSegX > rightX) continue;
+      const minSegY = Math.min(seg.y1, seg.y2);
+      const maxSegY = Math.max(seg.y1, seg.y2);
+      if (maxSegY < topY || minSegY > bottomY) continue;
       ctx.moveTo(seg.x1, seg.y1);
       ctx.lineTo(seg.x2, seg.y2);
     }
     ctx.stroke();
 
-    // Finish line
+    // Finish line — dashed vertical spans full course, label sits above the
+    // finish platform so it's visible inside the camera window.
     if (this.course.finishX >= leftX && this.course.finishX <= rightX) {
       ctx.strokeStyle = '#4ade80';
       ctx.lineWidth = 3;
@@ -683,8 +718,8 @@ export class MarblesOverlay extends BaseOverlay {
       ctx.fillStyle = '#4ade80';
       ctx.font = 'bold 40px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillText('FINISH', this.course.finishX, 40);
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('FINISH', this.course.finishX, this.course.finishY - 60);
     }
   }
 
