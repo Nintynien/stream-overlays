@@ -11,6 +11,13 @@ export class Physics {
     this.eventQueue = null;
 
     this.marbleBodies = new Map();
+    // Per-marble prev/curr transforms for render-side interpolation. Physics
+    // runs at FIXED_DT while the renderer can run faster (e.g. 144 Hz); without
+    // interpolation the mesh holds the same pose for multiple render frames
+    // then snaps. prev = state before the last sub-step; curr = state after;
+    // render lerps by alpha = accumulator / FIXED_DT.
+    this.marbleStates = new Map();
+    this.alpha = 0;
     this.trackBodies = [];
     this.accumulator = 0;
 
@@ -127,6 +134,13 @@ export class Physics {
       .setDensity(1.0);
     this.world.createCollider(colliderDesc, body);
     this.marbleBodies.set(id, body);
+    const r = body.rotation();
+    this.marbleStates.set(id, {
+      prevPos: { x: position.x, y: position.y, z: position.z },
+      currPos: { x: position.x, y: position.y, z: position.z },
+      prevRot: { x: r.x, y: r.y, z: r.z, w: r.w },
+      currRot: { x: r.x, y: r.y, z: r.z, w: r.w }
+    });
     return body;
   }
 
@@ -135,6 +149,7 @@ export class Physics {
     if (!body) return;
     this.world.removeRigidBody(body);
     this.marbleBodies.delete(id);
+    this.marbleStates.delete(id);
   }
 
   clearMarbles() {
@@ -142,6 +157,25 @@ export class Physics {
       this.world.removeRigidBody(body);
     }
     this.marbleBodies.clear();
+    this.marbleStates.clear();
+  }
+
+  // Snap both prev and curr to the body's current transform. Call after any
+  // setTranslation (teleport/rescue) so the render doesn't interpolate from
+  // the old position — the marble should appear at the new spot instantly.
+  syncMarbleTransform(id) {
+    const body = this.marbleBodies.get(id);
+    const st = this.marbleStates.get(id);
+    if (!body || !st) return;
+    const t = body.translation();
+    const r = body.rotation();
+    st.prevPos.x = st.currPos.x = t.x;
+    st.prevPos.y = st.currPos.y = t.y;
+    st.prevPos.z = st.currPos.z = t.z;
+    st.prevRot.x = st.currRot.x = r.x;
+    st.prevRot.y = st.currRot.y = r.y;
+    st.prevRot.z = st.currRot.z = r.z;
+    st.prevRot.w = st.currRot.w = r.w;
   }
 
   step(realDtSeconds) {
@@ -151,11 +185,26 @@ export class Physics {
     this.accumulator = Math.min(this.accumulator + realDtSeconds, FIXED_DT * MAX_SUBSTEPS);
     let stepsThisFrame = 0;
     while (this.accumulator >= FIXED_DT && stepsThisFrame < MAX_SUBSTEPS) {
+      // Snapshot curr → prev before stepping; after stepping, read the new
+      // body state into curr. Renderer interpolates between the two.
+      for (const st of this.marbleStates.values()) {
+        st.prevPos.x = st.currPos.x; st.prevPos.y = st.currPos.y; st.prevPos.z = st.currPos.z;
+        st.prevRot.x = st.currRot.x; st.prevRot.y = st.currRot.y; st.prevRot.z = st.currRot.z; st.prevRot.w = st.currRot.w;
+      }
       this.world.step(this.eventQueue);
+      for (const [id, body] of this.marbleBodies) {
+        const st = this.marbleStates.get(id);
+        if (!st) continue;
+        const t = body.translation();
+        const r = body.rotation();
+        st.currPos.x = t.x; st.currPos.y = t.y; st.currPos.z = t.z;
+        st.currRot.x = r.x; st.currRot.y = r.y; st.currRot.z = r.z; st.currRot.w = r.w;
+      }
       this.accumulator -= FIXED_DT;
       stepsThisFrame++;
       this.stepCountWindow++;
     }
+    this.alpha = this.accumulator / FIXED_DT;
     // Drain events each frame. We don't consume them (no collider has
     // ActiveEvents set), but draining defends against any future addition
     // that would otherwise accumulate events forever.

@@ -380,13 +380,11 @@ export class Renderer {
     }
   }
 
-  syncMarble(id, body) {
+  syncMarble(id, pos, quat) {
     const mesh = this.marbleMeshes.get(id);
     if (!mesh) return;
-    const t = body.translation();
-    const r = body.rotation();
-    mesh.position.set(t.x, t.y, t.z);
-    mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    mesh.position.set(pos.x, pos.y, pos.z);
+    mesh.quaternion.set(quat.x, quat.y, quat.z, quat.w);
   }
 
   render() {

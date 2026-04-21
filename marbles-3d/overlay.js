@@ -277,7 +277,13 @@ export class Marbles3DOverlay extends BaseOverlay {
       stuckCheckArclength: 0,
       stuckStreak: 0,
       heldUntilMs: 0,
-      heldPosition: null
+      heldPosition: null,
+      heldActive: false,
+      // Interpolated transform — computed each render frame from the physics
+      // prev/curr snapshots so the marble moves smoothly between fixed-timestep
+      // physics sub-steps. Camera target and HUD labels also read from these.
+      interpPos: new THREE.Vector3(pos.x, pos.y, pos.z),
+      interpQuat: new THREE.Quaternion()
     });
   }
 
@@ -379,7 +385,10 @@ export class Marbles3DOverlay extends BaseOverlay {
     const cam = this.renderer.camera;
     let camTarget, lookAt;
     if (leader) {
-      const t = leader.body.translation();
+      // Use the interpolated position so the camera target is smooth between
+      // physics ticks — otherwise the target steps at 60 Hz and the camera's
+      // position lerp inherits that judder.
+      const t = leader.interpPos;
       const s = this.sampleAtArclength(leader.arclength);
       const horizTan = new THREE.Vector3(s.tangent.x, 0, s.tangent.z);
       if (horizTan.lengthSq() < 1e-6) horizTan.set(1, 0, 0);
@@ -470,12 +479,21 @@ export class Marbles3DOverlay extends BaseOverlay {
 
     // Rescue penalty: once teleported, pin the marble in place for 1s before
     // physics takes over again. Gives other racers a tangible advantage when
-    // someone falls off the track.
-    if (m.heldUntilMs > nowMs && m.heldPosition) {
-      m.body.setTranslation(m.heldPosition, true);
-      m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      return;
+    // someone falls off the track. The collider is flipped to a sensor for
+    // the hold so other racers pass through the pinned marble instead of
+    // piling up behind it.
+    if (m.heldActive) {
+      if (nowMs < m.heldUntilMs) {
+        m.body.setTranslation(m.heldPosition, true);
+        m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+        // Collapse prev=curr so the renderer shows the marble pinned, not
+        // lerping in from wherever it was before the rescue teleport.
+        this.physics.syncMarbleTransform(m.id);
+        return;
+      }
+      m.body.collider(0).setSensor(false);
+      m.heldActive = false;
     }
 
     // Kill-plane recovery: teleport back to the nearest spline point if the
@@ -488,6 +506,11 @@ export class Marbles3DOverlay extends BaseOverlay {
       m.body.setTranslation({ x: recover.x, y: recover.y, z: recover.z }, true);
       m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      // Snap interpolation state to the rescue point so the marble doesn't
+      // streak across the scene from its fallen position.
+      this.physics.syncMarbleTransform(m.id);
+      m.body.collider(0).setSensor(true);
+      m.heldActive = true;
       m.heldUntilMs = nowMs + 1000;
       m.heldPosition = { x: recover.x, y: recover.y, z: recover.z };
       m.stuckCheckMs = nowMs + 1000;
@@ -535,11 +558,35 @@ export class Marbles3DOverlay extends BaseOverlay {
     }
   }
 
+  // Lerp position and slerp rotation from each marble's physics prev/curr
+  // snapshot by the current accumulator alpha. Writes into m.interpPos /
+  // m.interpQuat so downstream consumers (renderer, camera, labels) share one
+  // smooth source of truth per render frame.
+  updateInterpolatedTransforms() {
+    const states = this.physics?.marbleStates;
+    if (!states) return;
+    const alpha = this.physics.alpha;
+    const scratch = this._scratchQuat ?? (this._scratchQuat = new THREE.Quaternion());
+    for (const m of this.marbles.values()) {
+      const st = states.get(m.id);
+      if (!st) continue;
+      m.interpPos.set(
+        st.prevPos.x + (st.currPos.x - st.prevPos.x) * alpha,
+        st.prevPos.y + (st.currPos.y - st.prevPos.y) * alpha,
+        st.prevPos.z + (st.currPos.z - st.prevPos.z) * alpha
+      );
+      m.interpQuat.set(st.prevRot.x, st.prevRot.y, st.prevRot.z, st.prevRot.w);
+      scratch.set(st.currRot.x, st.currRot.y, st.currRot.z, st.currRot.w);
+      m.interpQuat.slerp(scratch, alpha);
+    }
+  }
+
   render(nowMs) {
     // Sync 3D meshes from physics bodies.
     if (this.physics && this.renderer) {
-      for (const [id, body] of this.physics.marbleBodies) {
-        this.renderer.syncMarble(id, body);
+      this.updateInterpolatedTransforms();
+      for (const m of this.marbles.values()) {
+        this.renderer.syncMarble(m.id, m.interpPos, m.interpQuat);
       }
       this.updateCamera();
       this.renderer.render();
@@ -694,7 +741,9 @@ export class Marbles3DOverlay extends BaseOverlay {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     for (const m of this.marbles.values()) {
-      const t = m.body.translation();
+      // Interpolated position keeps the label glued to the mesh; reading the
+      // raw body position makes labels snap at 60 Hz while the mesh is smooth.
+      const t = m.interpPos;
       tmp.set(t.x, t.y + radius + 0.25, t.z);
       tmp.project(camera);
       if (tmp.z <= -1 || tmp.z >= 1) continue;
