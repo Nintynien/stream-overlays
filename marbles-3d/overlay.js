@@ -110,7 +110,7 @@ export class Marbles3DOverlay extends BaseOverlay {
   // Random suffix on each name so their hashed colors differ run-to-run.
   startPhase1Demo() {
     this.openLobby();
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 20; i++) {
       this.addMarble(`demo_${i}_${Math.random().toString(36).slice(2, 8)}`);
     }
     this.startCountdown();
