@@ -510,11 +510,14 @@ export class MarblesOverlay extends BaseOverlay {
 
   updateCamera(dt) {
     if (!this.course) return;
-    let leaderX = 0;
+    let leaderX = -Infinity;
+    let hasUnfinished = false;
     for (const m of this.marbles.values()) {
-      const effX = m.finished ? this.course.finishX : m.x;
-      if (effX > leaderX) leaderX = effX;
+      if (m.finished) continue;
+      hasUnfinished = true;
+      if (m.x > leaderX) leaderX = m.x;
     }
+    if (!hasUnfinished) leaderX = this.course.finishX;
     const scale = window.innerHeight / this.course.courseHeight;
     const viewWorldW = window.innerWidth / scale;
     const targetCameraX = Math.max(0, Math.min(
