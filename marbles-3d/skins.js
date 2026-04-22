@@ -32,7 +32,8 @@ export const SKINS = [
   { id: 'earth',           label: 'Earth',           color: '#ffffff', procedural: 'earth',     roughness: 0.5,  metalness: 0.0 },
   { id: 'galaxy',          label: 'Galaxy',          color: '#ffffff', procedural: 'galaxy',    roughness: 0.4,  metalness: 0.1 },
   { id: 'wood',            label: 'Wood',            color: '#ffffff', procedural: 'wood',      roughness: 0.75, metalness: 0.0 },
-  { id: 'rainbow-stripes', label: 'Rainbow Stripes', color: '#ffffff', procedural: 'rainbow',   roughness: 0.35, metalness: 0.1 }
+  { id: 'rainbow-stripes', label: 'Rainbow Stripes', color: '#ffffff', procedural: 'rainbow',   roughness: 0.35, metalness: 0.1 },
+  { id: 'cow',             label: 'Cow Print',       color: '#ffffff', procedural: 'cow',       roughness: 0.8,  metalness: 0.0 }
 ];
 
 export const SKIN_BY_ID = new Map(SKINS.map(s => [s.id, s]));
@@ -143,6 +144,7 @@ function generateProceduralCanvas(kind) {
     case 'galaxy':   return genGalaxy();
     case 'wood':     return genWood();
     case 'rainbow':  return genRainbow();
+    case 'cow':      return genCow();
     default: {
       const c = makeCanvas();
       const ctx = c.getContext('2d');
@@ -372,6 +374,44 @@ function genWood() {
       ctx.lineTo(x0 + wobble, y);
     }
     ctx.stroke();
+  }
+  return c;
+}
+
+function genCow() {
+  // Holstein-style: irregular black blobs on a white ground. Blobs are
+  // built from overlapping circles so edges are organic, not polygonal.
+  // Any blob that straddles the left/right texture edge is also drawn
+  // shifted by ±TEX_SIZE so the pattern is seamless around the sphere
+  // equator (SphereGeometry wraps u: 0..1 → 0..2π).
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f5f1ea';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0xC0FFEE);
+  ctx.fillStyle = '#1a1a1a';
+
+  const blobCount = 10;
+  for (let i = 0; i < blobCount; i++) {
+    const cx = rand() * TEX_SIZE;
+    const cy = 40 + rand() * (TEX_SIZE - 80);
+    const clumps = 6 + Math.floor(rand() * 6);
+    const spread = 40 + rand() * 35;
+
+    for (const dx of [-TEX_SIZE, 0, TEX_SIZE]) {
+      const bx = cx + dx;
+      // Skip obviously-offscreen copies to save fill ops.
+      if (bx < -spread * 2 || bx > TEX_SIZE + spread * 2) continue;
+      for (let k = 0; k < clumps; k++) {
+        const a = rand() * Math.PI * 2;
+        const d = rand() * spread;
+        const r = 18 + rand() * 30;
+        ctx.beginPath();
+        ctx.arc(bx + Math.cos(a) * d, cy + Math.sin(a) * d * 0.75, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
   return c;
 }

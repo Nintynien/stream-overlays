@@ -28,7 +28,7 @@ Skin changes are only accepted during the `lobby` state. Once the countdown star
 
 **Glow** — `neon-pink`, `neon-green`, `neon-cyan`
 
-**Patterned** — `soccer`, `baseball`, `8ball`, `earth`, `galaxy`, `wood`, `rainbow-stripes`
+**Patterned** — `soccer`, `baseball`, `8ball`, `earth`, `galaxy`, `wood`, `rainbow-stripes`, `cow`
 
 Example: `!skin galaxy`
 
