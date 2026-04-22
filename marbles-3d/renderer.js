@@ -354,7 +354,7 @@ export class Renderer {
     }
   }
 
-  addMarbleMesh(id, radius, skin, fallbackColorCss) {
+  addMarbleMesh(id, radius, skin, fallbackColorCss, isWinner = false) {
     const geom = new THREE.SphereGeometry(radius, 24, 16);
     const mat = this._buildMarbleMaterial(skin, fallbackColorCss);
     const mesh = new THREE.Mesh(geom, mat);
@@ -363,6 +363,20 @@ export class Renderer {
     this.scene.add(mesh);
     this.marbleMeshes.set(id, mesh);
     this._applySkinTexture(id, mat, skin);
+    if (isWinner) {
+      const haloGeom = new THREE.SphereGeometry(radius * 1.18, 20, 14);
+      const haloMat = new THREE.MeshBasicMaterial({
+        color: 0xfbbf24,
+        transparent: true,
+        opacity: 0.25,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.BackSide
+      });
+      const halo = new THREE.Mesh(haloGeom, haloMat);
+      halo.name = 'winner-halo';
+      mesh.add(halo);
+    }
     return mesh;
   }
 
@@ -415,6 +429,10 @@ export class Renderer {
     const mesh = this.marbleMeshes.get(id);
     if (!mesh) return;
     this.scene.remove(mesh);
+    for (const child of mesh.children) {
+      child.geometry?.dispose();
+      child.material?.dispose();
+    }
     mesh.geometry.dispose();
     mesh.material.dispose();
     this.marbleMeshes.delete(id);

@@ -78,6 +78,29 @@ export function setViewerSkin(username, skinId) {
   return true;
 }
 
+// Defending-champion persistence. Stored as a single lowercase username
+// string under its own key rather than a sentinel inside the skin map so
+// resolveSkin stays a plain dictionary lookup.
+const LAST_WINNER_KEY = 'marbles-3d:last-winner';
+
+export function getLastWinner() {
+  try {
+    const raw = localStorage.getItem(LAST_WINNER_KEY);
+    return (typeof raw === 'string' && raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setLastWinner(username) {
+  if (!username) return;
+  try {
+    localStorage.setItem(LAST_WINNER_KEY, username.toLowerCase());
+  } catch {
+    // Same quota/private-mode policy as writeStore.
+  }
+}
+
 // ========== Texture loading / cache ==========
 const textureCache = new Map();
 const fileLoader = new THREE.TextureLoader();

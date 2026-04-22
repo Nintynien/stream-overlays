@@ -3,7 +3,7 @@ import { BaseOverlay } from '../core/base-overlay.js';
 import { Physics } from './physics.js';
 import { Renderer } from './renderer.js';
 import { generateTrack, nearestArclength } from './track.js';
-import { resolveSkin, setViewerSkin, SKIN_BY_ID } from './skins.js';
+import { resolveSkin, setViewerSkin, SKIN_BY_ID, getLastWinner, setLastWinner } from './skins.js';
 
 // ========== PRNG (mulberry32) ==========
 function mulberry32(seed) {
@@ -313,7 +313,8 @@ export class Marbles3DOverlay extends BaseOverlay {
     const body = this.physics.addMarble(id, pos, radius);
     const color = colorFromUsername(username);
     const skin = resolveSkin(username);
-    this.renderer.addMarbleMesh(id, radius, skin, color);
+    const isWinner = getLastWinner() === username.toLowerCase();
+    this.renderer.addMarbleMesh(id, radius, skin, color, isWinner);
 
     this.marbles.set(username, {
       id,
@@ -321,6 +322,7 @@ export class Marbles3DOverlay extends BaseOverlay {
       body,
       color,
       skin,
+      isWinner,
       spawnPos: { x: pos.x, y: pos.y, z: pos.z },
       arclength: 0,
       finished: false,
@@ -737,6 +739,7 @@ export class Marbles3DOverlay extends BaseOverlay {
       m.finished = true;
       m.finishTime = performance.now() - this.raceStartMs;
       this.finishOrder.push(m.username);
+      if (this.finishOrder.length === 1) setLastWinner(m.username);
       // Slow the marble so it doesn't barrel off the end of the finish platform.
       const v = m.body.linvel();
       m.body.setLinvel({ x: v.x * 0.3, y: v.y, z: v.z * 0.3 }, true);
@@ -968,6 +971,11 @@ export class Marbles3DOverlay extends BaseOverlay {
       ctx.fillRect(sx - tw / 2 - 5, sy - 15, tw + 10, 18);
       ctx.fillStyle = m.color;
       ctx.fillText(name, sx, sy - 2);
+      if (m.isWinner) {
+        ctx.font = '16px system-ui, sans-serif';
+        ctx.fillText('👑', sx, sy - 20);
+        ctx.font = 'bold 13px system-ui, sans-serif';
+      }
     }
   }
 
