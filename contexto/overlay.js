@@ -11,10 +11,15 @@ export class ContextoOverlay extends BaseOverlay {
 
     const s = config.settings || {};
     this.endpoint = (s.endpoint || 'https://api.contexto.me/machado/en').replace(/\/+$/, '');
+    this.corsProxy = resolveCorsProxy(s.corsProxy);
     this.configuredGame = s.game ?? null;
     this.minGame = s.minGame ?? 1;
     this.maxGame = s.maxGame ?? 1300;
     this.maxVisible = s.maxVisible ?? 15;
+
+    if (this.corsProxy && config.debug) {
+      console.log('[contexto] CORS proxy enabled:', this.corsProxy);
+    }
 
     this.gameState = 'idle'; // idle | playing | won | revealed
     this.gameId = null;
@@ -212,7 +217,8 @@ export class ContextoOverlay extends BaseOverlay {
   }
 
   async fetchGuess(gameId, word) {
-    const url = `${this.endpoint}/game/${gameId}/${encodeURIComponent(word)}`;
+    const targetUrl = `${this.endpoint}/game/${gameId}/${encodeURIComponent(word)}`;
+    const url = this.wrapProxy(targetUrl);
     this.apiCallCount++;
     this.updateDebug();
     const resp = await fetch(url);
@@ -223,6 +229,11 @@ export class ContextoOverlay extends BaseOverlay {
       throw new Error('Unexpected response shape');
     }
     return { distance: data.distance, lemma: data.lemma, word: data.word || word };
+  }
+
+  wrapProxy(targetUrl) {
+    if (!this.corsProxy) return targetUrl;
+    return `${this.corsProxy}${encodeURIComponent(targetUrl)}`;
   }
 
   // ── Leaderboard Rendering ──
@@ -399,7 +410,8 @@ export class ContextoOverlay extends BaseOverlay {
   async giveUp() {
     if (this.gameState === 'idle') return;
     try {
-      const url = `${this.endpoint}/giveup/${this.gameId}`;
+      const targetUrl = `${this.endpoint}/giveup/${this.gameId}`;
+      const url = this.wrapProxy(targetUrl);
       this.apiCallCount++;
       this.updateDebug();
       const resp = await fetch(url);
@@ -482,4 +494,15 @@ function escapeHtml(s) {
 function cssEscape(s) {
   if (typeof CSS !== 'undefined' && CSS.escape) return CSS.escape(s);
   return String(s).replace(/["\\]/g, '\\$&');
+}
+
+function resolveCorsProxy(value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  // Shorthands
+  if (/^(on|1|true|corsproxy|corsproxy\.io)$/i.test(v)) return 'https://corsproxy.io/?url=';
+  if (/^allorigins$/i.test(v)) return 'https://api.allorigins.win/raw?url=';
+  // Full custom prefix — expected to end in something that accepts an encoded URL
+  if (/^https?:\/\//i.test(v)) return v;
+  return null;
 }

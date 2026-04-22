@@ -43,7 +43,8 @@
           minGame: intParam('minGame', 1),
           maxGame: intParam('maxGame', 1300),
           maxVisible: intParam('maxVisible', 15),
-          endpoint: params.get('endpoint') || 'https://api.contexto.me/machado/en'
+          endpoint: params.get('endpoint') || 'https://api.contexto.me/machado/en',
+          corsProxy: params.get('corsProxy') || null
         }
       };
 
