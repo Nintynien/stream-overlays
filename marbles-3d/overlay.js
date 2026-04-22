@@ -289,6 +289,7 @@ export class Marbles3DOverlay extends BaseOverlay {
       username,
       body,
       color,
+      spawnPos: { x: pos.x, y: pos.y, z: pos.z },
       arclength: 0,
       finished: false,
       finishTime: 0,
@@ -311,6 +312,18 @@ export class Marbles3DOverlay extends BaseOverlay {
   startCountdown() {
     this.state = 'countdown';
     this.countdownStartMs = performance.now();
+    // Reset every marble to its assigned pen slot — during lobby, physics is
+    // live and marbles drift forward down the sloped pen floor, which would
+    // give whoever joined earliest a free head start at race time.
+    for (const m of this.marbles.values()) {
+      m.body.setTranslation(m.spawnPos, true);
+      m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      m.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      this.physics.syncMarbleTransform(m.id);
+      m.arclength = 0;
+      m.interpPos.set(m.spawnPos.x, m.spawnPos.y, m.spawnPos.z);
+      m.interpQuat.identity();
+    }
   }
 
   startRacing() {
