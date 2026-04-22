@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { loadSkinTexture } from './skins.js';
 
 export class Renderer {
   constructor(canvas) {
@@ -353,16 +354,61 @@ export class Renderer {
     }
   }
 
-  addMarbleMesh(id, radius, colorCss) {
+  addMarbleMesh(id, radius, skin, fallbackColorCss) {
     const geom = new THREE.SphereGeometry(radius, 24, 16);
-    const color = new THREE.Color(colorCss);
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.35, metalness: 0.1 });
+    const mat = this._buildMarbleMaterial(skin, fallbackColorCss);
     const mesh = new THREE.Mesh(geom, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.scene.add(mesh);
     this.marbleMeshes.set(id, mesh);
+    this._applySkinTexture(id, mat, skin);
     return mesh;
+  }
+
+  updateMarbleSkin(id, skin, fallbackColorCss) {
+    const mesh = this.marbleMeshes.get(id);
+    if (!mesh) return;
+    const newMat = this._buildMarbleMaterial(skin, fallbackColorCss);
+    // Dispose the old material but not its texture — textures are shared
+    // via the skin cache and outlive individual marbles.
+    mesh.material.dispose();
+    mesh.material = newMat;
+    this._applySkinTexture(id, newMat, skin);
+  }
+
+  _buildMarbleMaterial(skin, fallbackColorCss) {
+    if (!skin) {
+      return new THREE.MeshStandardMaterial({
+        color: new THREE.Color(fallbackColorCss),
+        roughness: 0.35,
+        metalness: 0.1
+      });
+    }
+    const params = {
+      color: new THREE.Color(skin.color),
+      roughness: skin.roughness ?? 0.35,
+      metalness: skin.metalness ?? 0.1
+    };
+    if (skin.emissive) {
+      params.emissive = new THREE.Color(skin.emissive);
+      params.emissiveIntensity = skin.emissiveIntensity ?? 1.0;
+    }
+    return new THREE.MeshStandardMaterial(params);
+  }
+
+  _applySkinTexture(id, mat, skin) {
+    if (!skin || (!skin.texture && !skin.procedural)) return;
+    loadSkinTexture(skin).then(tex => {
+      if (!tex) return;
+      // Guard against races: the mesh may have been removed or re-skinned
+      // while the texture was loading. Only apply if this material is still
+      // the live material on this marble.
+      const mesh = this.marbleMeshes.get(id);
+      if (!mesh || mesh.material !== mat) return;
+      mat.map = tex;
+      mat.needsUpdate = true;
+    });
   }
 
   removeMarbleMesh(id) {

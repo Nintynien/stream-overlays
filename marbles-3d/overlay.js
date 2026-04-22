@@ -3,6 +3,7 @@ import { BaseOverlay } from '../core/base-overlay.js';
 import { Physics } from './physics.js';
 import { Renderer } from './renderer.js';
 import { generateTrack, nearestArclength } from './track.js';
+import { resolveSkin, setViewerSkin, SKIN_BY_ID } from './skins.js';
 
 // ========== PRNG (mulberry32) ==========
 function mulberry32(seed) {
@@ -177,7 +178,36 @@ export class Marbles3DOverlay extends BaseOverlay {
     } else if ((cmd === '!camera' || cmd === '!cam' || cmd === '!spectate') && isMod &&
                (this.state === 'countdown' || this.state === 'racing' || this.state === 'finished')) {
       this.handleCameraCommand(cmd, arg);
+    } else if (cmd === '!skin' && this.state === 'lobby') {
+      this.handleSkinCommand(username, arg);
     }
+  }
+
+  handleSkinCommand(username, arg) {
+    if (!username || !arg) return;
+    const skinId = arg.toLowerCase();
+    const skin = SKIN_BY_ID.get(skinId);
+    if (!skin) return; // silent on unknown skin name
+
+    setViewerSkin(username, skinId);
+
+    const m = this.marbles.get(username);
+    if (!m) {
+      // Viewer hasn't joined yet — preference is saved for their next !join.
+      console.log(`[marbles-3d] skin saved: ${username} → ${skinId} (not joined)`);
+      return;
+    }
+
+    m.skin = skin;
+    this.renderer.updateMarbleSkin(m.id, skin, m.color);
+
+    // Snap camera to this viewer so they can see the new skin. Overrides
+    // any active spectate target — the last person to show off holds the
+    // camera until the next !skin/!camera or lobby end.
+    this.cameraMode = 'user';
+    this.cameraTargetUser = m.username;
+    this.cameraFinishedLingerUntilMs = 0;
+    console.log(`[marbles-3d] skin applied: ${username} → ${skinId}`);
   }
 
   resetCameraMode() {
@@ -282,13 +312,15 @@ export class Marbles3DOverlay extends BaseOverlay {
     const id = username;
     const body = this.physics.addMarble(id, pos, radius);
     const color = colorFromUsername(username);
-    this.renderer.addMarbleMesh(id, radius, color);
+    const skin = resolveSkin(username);
+    this.renderer.addMarbleMesh(id, radius, skin, color);
 
     this.marbles.set(username, {
       id,
       username,
       body,
       color,
+      skin,
       spawnPos: { x: pos.x, y: pos.y, z: pos.z },
       arclength: 0,
       finished: false,
