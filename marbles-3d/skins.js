@@ -18,10 +18,20 @@ export const SKINS = [
   { id: 'silver',    label: 'Silver',    color: '#cfd3d6', roughness: 0.15, metalness: 0.95 },
   { id: 'copper',    label: 'Copper',    color: '#c87533', roughness: 0.25, metalness: 0.9 },
 
+  // Basic matte colors — backing skins for the friendly `!skin yellow` etc.
+  // aliases, where no gem-toned equivalent exists.
+  { id: 'yellow',    label: 'Yellow',    color: '#f5d742', roughness: 0.35, metalness: 0.0 },
+  { id: 'orange',    label: 'Orange',    color: '#ff8530', roughness: 0.35, metalness: 0.0 },
+  { id: 'pink',      label: 'Pink',      color: '#ff7fb0', roughness: 0.35, metalness: 0.0 },
+  { id: 'cyan',      label: 'Cyan',      color: '#40c0d8', roughness: 0.35, metalness: 0.0 },
+
   // Glow / emissive — no texture, visible even in shadowed pen
   { id: 'neon-pink',  label: 'Neon Pink',  color: '#ff3bd1', emissive: '#ff3bd1', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
   { id: 'neon-green', label: 'Neon Green', color: '#3bff7a', emissive: '#3bff7a', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
-  { id: 'neon-cyan',  label: 'Neon Cyan',  color: '#3bf0ff', emissive: '#3bf0ff', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
+  { id: 'neon-cyan',   label: 'Neon Cyan',   color: '#3bf0ff', emissive: '#3bf0ff', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
+  { id: 'neon-yellow', label: 'Neon Yellow', color: '#f6ff3b', emissive: '#f6ff3b', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
+  { id: 'neon-orange', label: 'Neon Orange', color: '#ff7a1f', emissive: '#ff7a1f', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
+  { id: 'neon-purple', label: 'Neon Purple', color: '#b24bff', emissive: '#b24bff', emissiveIntensity: 0.9, roughness: 0.4, metalness: 0.0 },
 
   // Textured — procedural canvas textures so the overlay ships with visible
   // patterns out of the box. Descriptor supports `texture: <path>` for
@@ -32,11 +42,41 @@ export const SKINS = [
   { id: 'earth',           label: 'Earth',           color: '#ffffff', procedural: 'earth',     roughness: 0.5,  metalness: 0.0 },
   { id: 'galaxy',          label: 'Galaxy',          color: '#ffffff', procedural: 'galaxy',    roughness: 0.4,  metalness: 0.1 },
   { id: 'wood',            label: 'Wood',            color: '#ffffff', procedural: 'wood',      roughness: 0.75, metalness: 0.0 },
-  { id: 'rainbow-stripes', label: 'Rainbow Stripes', color: '#ffffff', procedural: 'rainbow',   roughness: 0.35, metalness: 0.1 },
-  { id: 'cow',             label: 'Cow Print',       color: '#ffffff', procedural: 'cow',       roughness: 0.8,  metalness: 0.0 }
+  { id: 'rainbow-stripes', label: 'Rainbow Stripes', color: '#ffffff', procedural: 'rainbow',    roughness: 0.35, metalness: 0.1 },
+  { id: 'cow',             label: 'Cow Print',       color: '#ffffff', procedural: 'cow',        roughness: 0.8,  metalness: 0.0 },
+  { id: 'basketball',      label: 'Basketball',      color: '#ffffff', procedural: 'basketball', roughness: 0.85, metalness: 0.0 },
+  { id: 'tennis',          label: 'Tennis Ball',     color: '#ffffff', procedural: 'tennis',     roughness: 0.9,  metalness: 0.0 },
+  { id: 'volleyball',      label: 'Volleyball',      color: '#ffffff', procedural: 'volleyball', roughness: 0.55, metalness: 0.0 },
+  { id: 'beachball',       label: 'Beach Ball',      color: '#ffffff', procedural: 'beachball',  roughness: 0.3,  metalness: 0.0 },
+  { id: 'zebra',           label: 'Zebra',           color: '#ffffff', procedural: 'zebra',      roughness: 0.7,  metalness: 0.0 },
+  { id: 'leopard',         label: 'Leopard',         color: '#ffffff', procedural: 'leopard',    roughness: 0.65, metalness: 0.0 },
+  { id: 'moon',            label: 'Moon',            color: '#ffffff', procedural: 'moon',       roughness: 0.9,  metalness: 0.0 },
+  { id: 'lava',            label: 'Lava',            color: '#ffffff', procedural: 'lava',       roughness: 0.55, metalness: 0.0 },
+  { id: 'swirl',           label: 'Swirl',           color: '#ffffff', procedural: 'swirl',      roughness: 0.18, metalness: 0.15 },
+  { id: 'watermelon',      label: 'Watermelon',      color: '#ffffff', procedural: 'watermelon', roughness: 0.55, metalness: 0.0 },
+  { id: 'disco',           label: 'Disco Ball',      color: '#ffffff', procedural: 'disco',      roughness: 0.12, metalness: 0.9  },
+  { id: 'eye',             label: 'Eyeball',         color: '#ffffff', procedural: 'eye',        roughness: 0.18, metalness: 0.0 }
 ];
 
 export const SKIN_BY_ID = new Map(SKINS.map(s => [s.id, s]));
+
+// Friendly aliases for viewers who type basic color names. Resolves to the
+// closest existing skin; `handleSkinCommand` canonicalizes to `skin.id`
+// before persisting so storage never contains alias keys.
+const SKIN_ALIASES = {
+  red:    'ruby',
+  blue:   'sapphire',
+  green:  'emerald',
+  purple: 'amethyst',
+  white:  'pearl',
+  black:  'obsidian',
+  gray:   'silver',
+  grey:   'silver'
+};
+for (const [alias, id] of Object.entries(SKIN_ALIASES)) {
+  const skin = SKIN_BY_ID.get(id);
+  if (skin) SKIN_BY_ID.set(alias, skin);
+}
 
 // ========== Per-viewer persistence ==========
 const STORAGE_KEY = 'marbles-3d:viewer-skins';
@@ -165,9 +205,21 @@ function generateProceduralCanvas(kind) {
     case '8ball':    return gen8Ball();
     case 'earth':    return genEarth();
     case 'galaxy':   return genGalaxy();
-    case 'wood':     return genWood();
-    case 'rainbow':  return genRainbow();
-    case 'cow':      return genCow();
+    case 'wood':       return genWood();
+    case 'rainbow':    return genRainbow();
+    case 'cow':        return genCow();
+    case 'basketball': return genBasketball();
+    case 'tennis':     return genTennis();
+    case 'volleyball': return genVolleyball();
+    case 'beachball':  return genBeachball();
+    case 'zebra':      return genZebra();
+    case 'leopard':    return genLeopard();
+    case 'moon':       return genMoon();
+    case 'lava':       return genLava();
+    case 'swirl':      return genSwirl();
+    case 'watermelon': return genWatermelon();
+    case 'disco':      return genDisco();
+    case 'eye':        return genEye();
     default: {
       const c = makeCanvas();
       const ctx = c.getContext('2d');
@@ -448,5 +500,452 @@ function genRainbow() {
     ctx.fillStyle = colors[i];
     ctx.fillRect(0, i * bandH, TEX_SIZE, bandH + 1);
   }
+  return c;
+}
+
+function genBasketball() {
+  // Orange ball with the classic 8-panel seam layout: one equatorial seam,
+  // one pole-to-pole meridian, and two curved side seams that arc around
+  // the sides. Lines drawn at texture edges wrap seamlessly around the sphere.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#d47a2a';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  ctx.strokeStyle = '#1a0e04';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+
+  // Equatorial seam
+  ctx.beginPath();
+  ctx.moveTo(0, TEX_SIZE / 2);
+  ctx.lineTo(TEX_SIZE, TEX_SIZE / 2);
+  ctx.stroke();
+
+  // Pole-to-pole meridian (at u=0 so it lines up with the sphere seam)
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, TEX_SIZE);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(TEX_SIZE, 0);
+  ctx.lineTo(TEX_SIZE, TEX_SIZE);
+  ctx.stroke();
+
+  // Two curved side seams, bowing inward toward the equator
+  for (const xc of [TEX_SIZE * 0.33, TEX_SIZE * 0.67]) {
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) {
+      const y = (i / 120) * TEX_SIZE;
+      const bow = Math.sin((i / 120) * Math.PI) * 55;
+      const x = xc + (xc < TEX_SIZE / 2 ? bow : -bow);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  return c;
+}
+
+function genTennis() {
+  // Fuzzy yellow-green with a single wavy white seam at the equator.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ccdd33';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  // Speckled fuzz
+  const rand = mulberry32(0x7E441);
+  for (let i = 0; i < 2000; i++) {
+    const x = rand() * TEX_SIZE;
+    const y = rand() * TEX_SIZE;
+    const shade = rand() < 0.5 ? 'rgba(180,200,60,0.35)' : 'rgba(230,240,140,0.3)';
+    ctx.fillStyle = shade;
+    ctx.fillRect(x, y, 1, 1);
+  }
+
+  ctx.strokeStyle = '#f7f3e6';
+  ctx.lineWidth = 5;
+  ctx.lineCap = 'round';
+  drawSeam(ctx, 0.5);
+  return c;
+}
+
+function genVolleyball() {
+  // Off-white with thin dark lines dividing it into the classic 18-panel
+  // layout (three vertical panels per hemisphere, offset between halves).
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f2ede1';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  ctx.strokeStyle = '#1c1c1c';
+  ctx.lineWidth = 3;
+
+  // Equator
+  ctx.beginPath();
+  ctx.moveTo(0, TEX_SIZE / 2);
+  ctx.lineTo(TEX_SIZE, TEX_SIZE / 2);
+  ctx.stroke();
+
+  // Vertical panel dividers (top hemisphere)
+  for (let i = 0; i < 3; i++) {
+    const x = (i / 3) * TEX_SIZE;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, TEX_SIZE / 2);
+    ctx.stroke();
+  }
+  // Vertical panel dividers (bottom hemisphere, offset by half a panel)
+  for (let i = 0; i < 3; i++) {
+    const x = (i / 3) * TEX_SIZE + TEX_SIZE / 6;
+    ctx.beginPath();
+    ctx.moveTo(x, TEX_SIZE / 2);
+    ctx.lineTo(x, TEX_SIZE);
+    ctx.stroke();
+  }
+  return c;
+}
+
+function genBeachball() {
+  // Vertical colored wedges that wrap the equator, with white caps at the
+  // poles — reads as a classic inflatable beachball.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  const colors = ['#e63946', '#ffd43b', '#2a9d8f', '#1d6fbf', '#f78fb3', '#ffffff'];
+  const w = TEX_SIZE / colors.length;
+  for (let i = 0; i < colors.length; i++) {
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(i * w, 0, w + 1, TEX_SIZE);
+  }
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, TEX_SIZE, 34);
+  ctx.fillRect(0, TEX_SIZE - 34, TEX_SIZE, 34);
+  return c;
+}
+
+function genZebra() {
+  // Wavy black stripes on cream. Each stripe is a closed path defined by
+  // parallel left/right curves around a jittered center meridian.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f0ead5';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0x2EB8A);
+  ctx.fillStyle = '#141414';
+
+  const stripeCount = 14;
+  for (let i = 0; i < stripeCount; i++) {
+    const baseX = (i / stripeCount) * TEX_SIZE + (rand() - 0.5) * 14;
+    const baseWidth = 10 + rand() * 18;
+    const phase = rand() * Math.PI * 2;
+    const amp = 5 + rand() * 10;
+
+    const pts = [];
+    for (let y = -10; y <= TEX_SIZE + 10; y += 10) {
+      const wobble = Math.sin(y * 0.018 + phase) * amp;
+      const widthJit = 0.75 + 0.25 * Math.sin(y * 0.03 + phase + 1);
+      const halfW = baseWidth * widthJit * 0.5;
+      pts.push([baseX + wobble - halfW, baseX + wobble + halfW, y]);
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][2]);
+    for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][2]);
+    for (let j = pts.length - 1; j >= 0; j--) ctx.lineTo(pts[j][1], pts[j][2]);
+    ctx.closePath();
+    ctx.fill();
+  }
+  return c;
+}
+
+function genLeopard() {
+  // Tan base with rosette clusters: a ring of dark spots around a lightly
+  // shaded center. Rosettes near the horizontal edges are duplicated ±TEX_SIZE
+  // so the pattern is seamless around the equator.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#d4a15a';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0x1E0BA4);
+  const rosetteCount = 45;
+
+  for (let i = 0; i < rosetteCount; i++) {
+    const cx = rand() * TEX_SIZE;
+    const cy = 30 + rand() * (TEX_SIZE - 60);
+    const r = 10 + rand() * 14;
+    const spotCount = 4 + Math.floor(rand() * 3);
+    // Freeze the spot layout so the three wrap copies match exactly.
+    const spots = [];
+    for (let s = 0; s < spotCount; s++) {
+      const a = (s / spotCount) * Math.PI * 2 + rand() * 0.6;
+      spots.push({ a, size: 4 + rand() * 4 });
+    }
+
+    for (const dx of [-TEX_SIZE, 0, TEX_SIZE]) {
+      const bx = cx + dx;
+      if (bx < -r * 2 || bx > TEX_SIZE + r * 2) continue;
+
+      ctx.fillStyle = 'rgba(140, 80, 25, 0.45)';
+      ctx.beginPath();
+      ctx.arc(bx, cy, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#2a1808';
+      for (const s of spots) {
+        const sx = bx + Math.cos(s.a) * r;
+        const sy = cy + Math.sin(s.a) * r * 0.85;
+        ctx.beginPath();
+        ctx.arc(sx, sy, s.size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+  return c;
+}
+
+function genMoon() {
+  // Gray regolith with darker "mare" patches and scattered craters. Craters
+  // have a faint light rim and a dark bowl — enough to read as pocked terrain
+  // at marble size.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#b3afa6';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0x1009D);
+
+  // Darker mare patches
+  for (let i = 0; i < 12; i++) {
+    const x = rand() * TEX_SIZE;
+    const y = rand() * TEX_SIZE;
+    const r = 40 + rand() * 70;
+    ctx.fillStyle = 'rgba(100, 96, 88, 0.35)';
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Craters
+  for (let i = 0; i < 40; i++) {
+    const cx = rand() * TEX_SIZE;
+    const cy = 25 + rand() * (TEX_SIZE - 50);
+    const r = 4 + rand() * 18;
+    ctx.fillStyle = 'rgba(225, 220, 210, 0.5)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(55, 50, 45, 0.85)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
+function genLava() {
+  // Dark rock with a network of bright cracks. Each crack is stroked three
+  // times — wide dim orange, narrower yellow, then a thin white-hot core —
+  // so it reads as glowing even though the material is not actually emissive.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+
+  const bg = ctx.createRadialGradient(TEX_SIZE / 2, TEX_SIZE / 2, 20, TEX_SIZE / 2, TEX_SIZE / 2, TEX_SIZE * 0.8);
+  bg.addColorStop(0, '#3a0f08');
+  bg.addColorStop(1, '#0a0402');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0x1AB7A);
+
+  const cracks = [];
+  for (let i = 0; i < 16; i++) {
+    const path = [[rand() * TEX_SIZE, rand() * TEX_SIZE]];
+    const steps = 18 + Math.floor(rand() * 12);
+    for (let s = 0; s < steps; s++) {
+      const [x, y] = path[path.length - 1];
+      path.push([x + (rand() - 0.5) * 38, y + (rand() - 0.5) * 38]);
+    }
+    cracks.push(path);
+  }
+
+  const strokePass = (width, style) => {
+    ctx.strokeStyle = style;
+    ctx.lineWidth = width;
+    ctx.lineCap = 'round';
+    for (const path of cracks) {
+      ctx.beginPath();
+      ctx.moveTo(path[0][0], path[0][1]);
+      for (let j = 1; j < path.length; j++) ctx.lineTo(path[j][0], path[j][1]);
+      ctx.stroke();
+    }
+  };
+  strokePass(11, 'rgba(255, 105, 25, 0.55)');
+  strokePass(5,  'rgba(255, 195, 60, 0.8)');
+  strokePass(1.5, '#fff5c0');
+  return c;
+}
+
+function genSwirl() {
+  // Classic cat's-eye marble: three wavy colored vanes embedded in a
+  // translucent white base. Each vane is a closed ribbon that snakes across
+  // the texture so it looks like a swirl from any viewing angle.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#faf6ec';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const vanes = [
+    { color: '#ff4b8b', yFrac: 0.22, amp: 38, phase: 0 },
+    { color: '#3ba2ff', yFrac: 0.5,  amp: 55, phase: 1.3 },
+    { color: '#ffcc3b', yFrac: 0.78, amp: 38, phase: 2.4 }
+  ];
+
+  for (const v of vanes) {
+    const halfTh = 22;
+    ctx.fillStyle = v.color;
+    ctx.beginPath();
+    for (let i = 0; i <= 240; i++) {
+      const x = (i / 240) * TEX_SIZE;
+      const y = v.yFrac * TEX_SIZE + Math.sin((i / 240) * Math.PI * 3 + v.phase) * v.amp - halfTh;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    for (let i = 240; i >= 0; i--) {
+      const x = (i / 240) * TEX_SIZE;
+      const y = v.yFrac * TEX_SIZE + Math.sin((i / 240) * Math.PI * 3 + v.phase) * v.amp + halfTh;
+      ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+  return c;
+}
+
+function genWatermelon() {
+  // Red flesh in the middle band, green rind at the poles, dark stripes on
+  // the rind, scattered black seeds in the flesh. The sphere UV puts y=0/y=1
+  // at the poles so "rind on top and bottom" reads correctly.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#e63c4a';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rindH = 62;
+  ctx.fillStyle = '#2d7d30';
+  ctx.fillRect(0, 0, TEX_SIZE, rindH);
+  ctx.fillRect(0, TEX_SIZE - rindH, TEX_SIZE, rindH);
+
+  // Pale transition band
+  ctx.fillStyle = '#f3d8d0';
+  ctx.fillRect(0, rindH, TEX_SIZE, 8);
+  ctx.fillRect(0, TEX_SIZE - rindH - 8, TEX_SIZE, 8);
+
+  // Rind stripes
+  ctx.fillStyle = '#19471c';
+  for (let i = 0; i < 22; i++) {
+    const x = (i / 22) * TEX_SIZE + Math.sin(i * 0.6) * 6;
+    ctx.fillRect(x, 0, 5, rindH);
+    ctx.fillRect(x + 3, TEX_SIZE - rindH, 5, rindH);
+  }
+
+  // Seeds
+  const rand = mulberry32(0x4A7ED);
+  ctx.fillStyle = '#1a0a08';
+  for (let i = 0; i < 28; i++) {
+    const x = rand() * TEX_SIZE;
+    const y = rindH + 30 + rand() * (TEX_SIZE - rindH * 2 - 60);
+    ctx.beginPath();
+    ctx.ellipse(x, y, 4.5, 7.5, rand() * Math.PI, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return c;
+}
+
+function genDisco() {
+  // Grid of small square facets with random shades — combined with the high
+  // metalness/low roughness of the skin descriptor, reads as a mirror ball.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#666';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  const rand = mulberry32(0xD15C0);
+  const cell = 24;
+  for (let y = 0; y < TEX_SIZE; y += cell) {
+    for (let x = 0; x < TEX_SIZE; x += cell) {
+      const shade = 0.35 + rand() * 0.65;
+      const v = Math.floor(230 * shade);
+      ctx.fillStyle = `rgb(${v},${v},${v})`;
+      ctx.fillRect(x + 1, y + 1, cell - 2, cell - 2);
+    }
+  }
+  return c;
+}
+
+function genEye() {
+  // White sclera with red veins, a blue iris with radial striations, black
+  // pupil, and a specular highlight. Single centered feature — the back of
+  // the eye (opposite side of the sphere) stays plain white, which is fine.
+  const c = makeCanvas();
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f9f3e8';
+  ctx.fillRect(0, 0, TEX_SIZE, TEX_SIZE);
+
+  // Veins
+  const rand = mulberry32(0xEFE01);
+  ctx.strokeStyle = 'rgba(190, 35, 35, 0.55)';
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 30; i++) {
+    let x = rand() * TEX_SIZE;
+    let y = rand() * TEX_SIZE;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let s = 0; s < 8; s++) {
+      x += (rand() - 0.5) * 22;
+      y += (rand() - 0.5) * 22;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  const cx = TEX_SIZE / 2;
+  const cy = TEX_SIZE / 2;
+  const irisR = 95;
+
+  // Iris
+  const irisGrad = ctx.createRadialGradient(cx, cy, 12, cx, cy, irisR);
+  irisGrad.addColorStop(0, '#6bb0d6');
+  irisGrad.addColorStop(0.7, '#2a6a9b');
+  irisGrad.addColorStop(1, '#123c60');
+  ctx.fillStyle = irisGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, irisR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Radial striations
+  ctx.strokeStyle = 'rgba(20, 40, 70, 0.5)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 40; i++) {
+    const a = (i / 40) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(a) * 24, cy + Math.sin(a) * 24);
+    ctx.lineTo(cx + Math.cos(a) * irisR, cy + Math.sin(a) * irisR);
+    ctx.stroke();
+  }
+
+  // Pupil
+  ctx.fillStyle = '#080606';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 36, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Specular highlight
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+  ctx.beginPath();
+  ctx.arc(cx - 14, cy - 16, 9, 0, Math.PI * 2);
+  ctx.fill();
   return c;
 }

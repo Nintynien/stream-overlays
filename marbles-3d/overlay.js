@@ -189,7 +189,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     const skin = SKIN_BY_ID.get(skinId);
     if (!skin) return; // silent on unknown skin name
 
-    setViewerSkin(username, skinId);
+    setViewerSkin(username, skin.id);
 
     const m = this.marbles.get(username);
     if (!m) {
