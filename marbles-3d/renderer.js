@@ -1,6 +1,33 @@
 import * as THREE from 'three';
 import { loadSkinTexture } from './skins.js';
 
+// Per-effect halo styling. Each halo is a back-side additive sphere child of
+// the marble mesh — same pattern as winner halo, multiple effects stack as
+// separate children (named effect-<kind> so removal can find a specific one).
+const EFFECT_VISUALS = {
+  star:     { color: 0xffd700, scale: 1.30, opacity: 0.55 },
+  shield:   { color: 0x60a5fa, scale: 1.40, opacity: 0.45 },
+  mini:     { color: 0x22d3ee, scale: 1.25, opacity: 0.35 },
+  mega:     { color: 0xef4444, scale: 1.45, opacity: 0.40 },
+  antigrav: { color: 0xa855f7, scale: 1.30, opacity: 0.35 },
+  magnet:   { color: 0xfb923c, scale: 1.30, opacity: 0.35 },
+  rocket:   { color: 0xfbbf24, scale: 1.35, opacity: 0.45 },
+  frozen:   { color: 0xbae6fd, scale: 1.45, opacity: 0.65 },
+  boost:    { color: 0x10b981, scale: 1.30, opacity: 0.35 },
+  staggered:{ color: 0xfacc15, scale: 1.25, opacity: 0.30 },
+  default:  { color: 0xffffff, scale: 1.25, opacity: 0.35 }
+};
+
+const PROJECTILE_VISUALS = {
+  banana:    { color: 0xfde047, emissive: 0xfbbf24, emissiveIntensity: 0.5, radius: 0.22 },
+  bomb:      { color: 0x1f2937, emissive: 0xef4444, emissiveIntensity: 0.7, radius: 0.30 },
+  redshell:  { color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.7, radius: 0.20 },
+  greenshell:{ color: 0x10b981, emissive: 0x047857, emissiveIntensity: 0.7, radius: 0.20 },
+  blueshell: { color: 0x3b82f6, emissive: 0x1e40af, emissiveIntensity: 0.8, radius: 0.22 },
+  freeze:    { color: 0xbae6fd, emissive: 0x38bdf8, emissiveIntensity: 0.7, radius: 0.18 },
+  default:   { color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.4, radius: 0.20 }
+};
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -41,6 +68,10 @@ export class Renderer {
     this.catchBoxMeshes = [];
     this.startPenMeshes = [];
     this.obstacleMeshes = [];
+    // Power-up gems keyed by box id so cooldown toggles can find them by id.
+    // Iteration (for the spin/bob animation) walks .values().
+    this.powerUpBoxMeshes = new Map();
+    this.projectileMeshes = new Map();
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
@@ -133,6 +164,154 @@ export class Renderer {
     tex.anisotropy = this.renderer.capabilities.getMaxAnisotropy();
     this._trackTexture = tex;
     return tex;
+  }
+
+  addPowerUpBoxMesh(placement) {
+    const h = placement.halfExtents;
+    // Octahedron — 8 triangular faces, gem-shaped silhouette that reads as
+    // unmistakably 3D from any camera angle (a textured cube spinning looks
+    // 2D when its broad face is camera-facing). Radius slightly larger than
+    // the sensor half-extent so the visible gem fills the trigger volume.
+    const r = Math.min(h.x, h.y, h.z) * 1.2;
+    const geom = new THREE.OctahedronGeometry(r, 0);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xfde047,
+      emissive: new THREE.Color(0xfbbf24),
+      emissiveIntensity: 0.9,
+      roughness: 0.25,
+      metalness: 0.45,
+      flatShading: true   // crisp facet shading — flatShading on icos/octa
+                          // is what makes them read as gems vs. lumpy spheres
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(placement.position.x, placement.position.y, placement.position.z);
+    // Base orientation = sample frame (right, up, tangent). Spin is layered
+    // on top in render() each frame around the local Y axis (sample.up).
+    const baseQuat = new THREE.Quaternion(
+      placement.rotation.x, placement.rotation.y,
+      placement.rotation.z, placement.rotation.w
+    );
+    mesh.quaternion.copy(baseQuat);
+    mesh._baseQuat = baseQuat.clone();
+    mesh._spinPhase = (placement.id ? placement.id.length * 0.7 : 0);
+    mesh._basePosY = placement.position.y;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+
+    // White wireframe edges over the gem — defines the silhouette against
+    // the dark track and emphasizes the faceted shape during rotation.
+    const edges = new THREE.EdgesGeometry(geom);
+    const edgeMat = new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.9
+    });
+    const edgeLines = new THREE.LineSegments(edges, edgeMat);
+    edgeLines.name = 'box-edges';
+    mesh.add(edgeLines);
+
+    // Soft outer halo — additive icosahedron just beyond the gem so the box
+    // glows at any view angle, even when occluded by its own backfaces.
+    const haloGeom = new THREE.IcosahedronGeometry(r * 1.55, 0);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0xfde68a,
+      transparent: true,
+      opacity: 0.20,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide
+    });
+    const halo = new THREE.Mesh(haloGeom, haloMat);
+    halo.name = 'box-halo';
+    mesh.add(halo);
+    this.scene.add(mesh);
+    this.powerUpBoxMeshes.set(placement.id, mesh);
+    return mesh;
+  }
+
+  setPowerUpBoxVisible(id, visible) {
+    const mesh = this.powerUpBoxMeshes.get(id);
+    if (!mesh) return;
+    mesh.visible = visible;
+  }
+
+  // Attach or detach a named child halo on a marble. Multiple effects stack
+  // as multiple children (named effect-<kind>); removal walks for the matching
+  // name. Non-destructive vs. the marble's skin material — the halo is its own
+  // mesh with additive blending, drawn over the skinned sphere.
+  setMarbleEffectVisual(id, kind, attach) {
+    const mesh = this.marbleMeshes.get(id);
+    if (!mesh) return;
+    const name = `effect-${kind}`;
+    // Always remove an existing halo of this kind first — handles re-apply
+    // (refresh stacks) without leaking duplicates.
+    for (let i = mesh.children.length - 1; i >= 0; i--) {
+      const c = mesh.children[i];
+      if (c.name === name) {
+        mesh.remove(c);
+        c.geometry?.dispose();
+        c.material?.dispose();
+      }
+    }
+    if (!attach) return;
+    const visual = EFFECT_VISUALS[kind] ?? EFFECT_VISUALS.default;
+    const radius = mesh.geometry.parameters?.radius ?? 0.3;
+    const haloGeom = new THREE.SphereGeometry(radius * visual.scale, 20, 14);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: visual.color,
+      transparent: true,
+      opacity: visual.opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide
+    });
+    const halo = new THREE.Mesh(haloGeom, haloMat);
+    halo.name = name;
+    halo._effectKind = kind;
+    mesh.add(halo);
+  }
+
+  spawnProjectile(id, kind, position, opts = {}) {
+    if (this.projectileMeshes.has(id)) this.removeProjectile(id);
+    const visual = PROJECTILE_VISUALS[kind] ?? PROJECTILE_VISUALS.default;
+    const radius = opts.radius ?? visual.radius ?? 0.2;
+    const geom = new THREE.SphereGeometry(radius, 16, 12);
+    const mat = new THREE.MeshStandardMaterial({
+      color: visual.color,
+      emissive: new THREE.Color(visual.emissive ?? visual.color),
+      emissiveIntensity: visual.emissiveIntensity ?? 0.5,
+      roughness: 0.3,
+      metalness: 0.1
+    });
+    const mesh = new THREE.Mesh(geom, mat);
+    mesh.position.set(position.x, position.y, position.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    this.scene.add(mesh);
+    this.projectileMeshes.set(id, mesh);
+    return mesh;
+  }
+
+  updateProjectile(id, position, quaternion) {
+    const mesh = this.projectileMeshes.get(id);
+    if (!mesh) return;
+    mesh.position.set(position.x, position.y, position.z);
+    if (quaternion) mesh.quaternion.set(quaternion.x, quaternion.y, quaternion.z, quaternion.w);
+  }
+
+  removeProjectile(id) {
+    const mesh = this.projectileMeshes.get(id);
+    if (!mesh) return;
+    this.scene.remove(mesh);
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+    this.projectileMeshes.delete(id);
+  }
+
+  clearAllProjectiles() {
+    for (const id of Array.from(this.projectileMeshes.keys())) {
+      this.removeProjectile(id);
+    }
   }
 
   addGroundMesh(halfSize = 50, color = 0x3a3a44) {
@@ -352,6 +531,21 @@ export class Renderer {
       material.dispose();
       this.obstacleMeshes = [];
     }
+    if (this.powerUpBoxMeshes.size > 0) {
+      // Each box has its own material instance (so per-box emissive could be
+      // tweaked later), so dispose materials inline rather than sharing.
+      for (const mesh of this.powerUpBoxMeshes.values()) {
+        this.scene.remove(mesh);
+        for (const child of mesh.children) {
+          child.geometry?.dispose();
+          child.material?.dispose();
+        }
+        mesh.geometry.dispose();
+        mesh.material.dispose();
+      }
+      this.powerUpBoxMeshes.clear();
+    }
+    this.clearAllProjectiles();
   }
 
   addMarbleMesh(id, radius, skin, fallbackColorCss, isWinner = false) {
@@ -461,6 +655,34 @@ export class Renderer {
       this.sunLight.position.copy(focus).add(this._sunOffset);
       this.sunLight.target.position.copy(focus);
       this.sunLight.target.updateMatrixWorld();
+    }
+    // Spin power-up gems around their local up (sample.up) and add a small
+    // world-Y bob. Per-box phase offset stops a row of gems from pulsing in
+    // lockstep, which would look like a synchronized chorus line.
+    if (this.powerUpBoxMeshes.size > 0) {
+      const t = performance.now() * 0.001;
+      const spinQ = this._scratchSpinQuat ?? (this._scratchSpinQuat = new THREE.Quaternion());
+      const spinAxis = this._scratchSpinAxis ?? (this._scratchSpinAxis = new THREE.Vector3(0, 1, 0));
+      for (const mesh of this.powerUpBoxMeshes.values()) {
+        if (!mesh.visible) continue; // skip animation work on cooled-down boxes
+        const phase = mesh._spinPhase ?? 0;
+        spinQ.setFromAxisAngle(spinAxis, t * 1.6 + phase);
+        mesh.quaternion.copy(mesh._baseQuat).multiply(spinQ);
+        if (mesh._basePosY !== undefined) {
+          mesh.position.y = mesh._basePosY + Math.sin(t * 2.2 + phase) * 0.07;
+        }
+      }
+    }
+    // Star halo: cycle hue per frame so it reads as the iconic rainbow shimmer.
+    if (this.marbleMeshes.size > 0) {
+      const hue = (performance.now() * 0.001) % 1;
+      for (const mesh of this.marbleMeshes.values()) {
+        for (const child of mesh.children) {
+          if (child._effectKind === 'star' && child.material?.color) {
+            child.material.color.setHSL(hue, 1.0, 0.55);
+          }
+        }
+      }
     }
     this.renderer.render(this.scene, this.camera);
   }

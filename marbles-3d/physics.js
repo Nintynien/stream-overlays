@@ -21,6 +21,17 @@ export class Physics {
     this.trackBodies = [];
     this.accumulator = 0;
 
+    // Power-up sensor bookkeeping. The handle map lets the event drain resolve
+    // numeric collider handles back to gameplay identifiers (marble username or
+    // box id). Marble colliders and box sensors both register here.
+    this.colliderHandleToOwner = new Map();
+    this.powerUpSensorBodies = [];
+    this.onPowerUpIntersection = null;
+
+    // Generic dynamic projectiles spawned by power-ups (banana, bomb, green
+    // shell). Tracked so teardown can dispose them without iterating the world.
+    this.projectileBodies = new Map();
+
     this.stepCountWindow = 0;
     this.stepWindowStartMs = 0;
     this.stepsPerSecond = 0;
@@ -119,6 +130,87 @@ export class Physics {
       this.world.removeRigidBody(body);
     }
     this.trackBodies = [];
+    this.removePowerUpSensors();
+    this.removeAllProjectiles();
+  }
+
+  // Sensor cuboid for a power-up box. Marble↔box overlaps emit intersection
+  // events through the same drain as contact events; the handle map routes them
+  // to onPowerUpIntersection in step().
+  addPowerUpSensor(boxId, position, halfExtents, rotation) {
+    const bodyDesc = RAPIER.RigidBodyDesc.fixed()
+      .setTranslation(position.x, position.y, position.z);
+    if (rotation) bodyDesc.setRotation(rotation);
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.cuboid(halfExtents.x, halfExtents.y, halfExtents.z)
+      .setSensor(true)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.colliderHandleToOwner.set(collider.handle, { kind: 'box', id: boxId });
+    this.powerUpSensorBodies.push(body);
+    return collider.handle;
+  }
+
+  buildPowerUpSensors(track, onIntersection) {
+    this.removePowerUpSensors();
+    this.onPowerUpIntersection = onIntersection;
+    if (!track?.powerUpPlacements) return;
+    for (const p of track.powerUpPlacements) {
+      this.addPowerUpSensor(p.id, p.position, p.halfExtents, p.rotation);
+    }
+  }
+
+  removePowerUpSensors() {
+    for (const body of this.powerUpSensorBodies) {
+      if (body.numColliders() > 0) {
+        const collider = body.collider(0);
+        this.colliderHandleToOwner.delete(collider.handle);
+      }
+      this.world.removeRigidBody(body);
+    }
+    this.powerUpSensorBodies = [];
+    this.onPowerUpIntersection = null;
+  }
+
+  // Spawn a dynamic ball-shaped projectile (e.g. banana sensor, bomb body).
+  // Returned id is the caller's choice; physics just bookkeeps and routes
+  // intersection events the same way as box sensors.
+  addProjectile(id, kind, position, radius, opts = {}) {
+    const isStatic = opts.isStatic ?? false;
+    const isSensor = opts.isSensor ?? false;
+    const bodyDesc = isStatic
+      ? RAPIER.RigidBodyDesc.fixed().setTranslation(position.x, position.y, position.z)
+      : RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(position.x, position.y, position.z)
+          .setLinearDamping(opts.linearDamping ?? 0.2)
+          .setAngularDamping(0.5);
+    const body = this.world.createRigidBody(bodyDesc);
+    const colliderDesc = RAPIER.ColliderDesc.ball(radius)
+      .setFriction(0.4)
+      .setRestitution(opts.restitution ?? 0.3)
+      .setDensity(opts.density ?? 1.0)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    if (isSensor) colliderDesc.setSensor(true);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.colliderHandleToOwner.set(collider.handle, { kind: 'projectile', id, projectileKind: kind });
+    this.projectileBodies.set(id, body);
+    return body;
+  }
+
+  removeProjectile(id) {
+    const body = this.projectileBodies.get(id);
+    if (!body) return;
+    if (body.numColliders() > 0) {
+      this.colliderHandleToOwner.delete(body.collider(0).handle);
+    }
+    this.world.removeRigidBody(body);
+    this.projectileBodies.delete(id);
+  }
+
+  removeAllProjectiles() {
+    for (const id of Array.from(this.projectileBodies.keys())) {
+      this.removeProjectile(id);
+    }
   }
 
   addMarble(id, position, radius) {
@@ -132,7 +224,8 @@ export class Physics {
       .setFriction(0.4)
       .setRestitution(0.1)
       .setDensity(1.0);
-    this.world.createCollider(colliderDesc, body);
+    const collider = this.world.createCollider(colliderDesc, body);
+    this.colliderHandleToOwner.set(collider.handle, { kind: 'marble', id });
     this.marbleBodies.set(id, body);
     const r = body.rotation();
     this.marbleStates.set(id, {
@@ -147,17 +240,39 @@ export class Physics {
   removeMarble(id) {
     const body = this.marbleBodies.get(id);
     if (!body) return;
+    if (body.numColliders() > 0) {
+      this.colliderHandleToOwner.delete(body.collider(0).handle);
+    }
     this.world.removeRigidBody(body);
     this.marbleBodies.delete(id);
     this.marbleStates.delete(id);
   }
 
   clearMarbles() {
-    for (const body of this.marbleBodies.values()) {
-      this.world.removeRigidBody(body);
+    for (const id of Array.from(this.marbleBodies.keys())) {
+      this.removeMarble(id);
     }
-    this.marbleBodies.clear();
-    this.marbleStates.clear();
+  }
+
+  // Toggle marble collider sensor state. Caller (overlay) tracks layered
+  // reasons (rescue + frozen + ...) and only flips this when the count goes
+  // 0↔1 — replaces the older boolean heldActive that would clobber other
+  // sensor reasons on rescue restore.
+  setMarbleSensor(id, isSensor) {
+    const body = this.marbleBodies.get(id);
+    if (!body) return;
+    if (body.numColliders() === 0) return;
+    body.collider(0).setSensor(isSensor);
+  }
+
+  // Live radius change for grow/shrink power-ups. Rapier 0.14 supports
+  // setRadius on ball colliders. Mass scales by density-volume so we leave
+  // density alone and let Rapier recompute mass from the new radius.
+  setMarbleRadius(id, radius) {
+    const body = this.marbleBodies.get(id);
+    if (!body) return;
+    if (body.numColliders() === 0) return;
+    body.collider(0).setRadius(radius);
   }
 
   // Snap both prev and curr to the body's current transform. Call after any
@@ -205,10 +320,33 @@ export class Physics {
       this.stepCountWindow++;
     }
     this.alpha = this.accumulator / FIXED_DT;
-    // Drain events each frame. We don't consume them (no collider has
-    // ActiveEvents set), but draining defends against any future addition
-    // that would otherwise accumulate events forever.
-    this.eventQueue.drainCollisionEvents(() => {});
+    // Drain events. Sensor↔marble pairs route to the power-up callback;
+    // other pairs (e.g. projectile↔marble) route to projectile handlers.
+    this.eventQueue.drainCollisionEvents((h1, h2, started) => {
+      const o1 = this.colliderHandleToOwner.get(h1);
+      const o2 = this.colliderHandleToOwner.get(h2);
+      if (!o1 || !o2) return;
+      // Marble↔box: power-up pickup.
+      if (o1.kind === 'marble' && o2.kind === 'box') {
+        this.onPowerUpIntersection?.(o1.id, o2.id, started);
+        return;
+      }
+      if (o1.kind === 'box' && o2.kind === 'marble') {
+        this.onPowerUpIntersection?.(o2.id, o1.id, started);
+        return;
+      }
+      // Marble↔projectile: dispatched the same way; the overlay decides what
+      // each projectile kind does on hit. Only fire on start to avoid
+      // double-applying when the projectile despawns.
+      if (started && o1.kind === 'marble' && o2.kind === 'projectile') {
+        this.onProjectileHit?.(o1.id, o2.id, o2.projectileKind);
+        return;
+      }
+      if (started && o1.kind === 'projectile' && o2.kind === 'marble') {
+        this.onProjectileHit?.(o2.id, o1.id, o1.projectileKind);
+        return;
+      }
+    });
     this.eventQueue.drainContactForceEvents(() => {});
     const nowMs = performance.now();
     const elapsedMs = nowMs - this.stepWindowStartMs;

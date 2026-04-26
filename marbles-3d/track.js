@@ -601,6 +601,45 @@ export function generateTrack(rng, settings) {
     }
   }
 
+  // Power-up boxes — visible cuboid sensors at fixed arclength intervals.
+  // Deterministic by seed (uses sample geometry only, no rng) so the same seed
+  // reproduces the same box layout. Skips widen-section interiors (plinko
+  // zones) where pickup is bounce luck rather than skill, and skips the start
+  // and finish buffers so the opener rampDown and finish run feel clean.
+  const powerUpPlacements = [];
+  {
+    const boxHalf = 0.4;
+    const halfExtents = { x: boxHalf, y: boxHalf, z: boxHalf };
+    const minSpacing = 25.0;
+    const startBuffer = 10.0;
+    const endBuffer = 8.0;
+    const widenThreshold = trackHalfWidth * 1.3;
+    const totalArc = samples[samples.length - 1].arclength;
+    let nextArc = startBuffer;
+    let nextId = 0;
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      if (s.arclength < nextArc) continue;
+      if (s.arclength > totalArc - endBuffer) break;
+      if (s.halfWidth > widenThreshold) continue;
+      // Center the box just above the floor of the U-profile so marbles
+      // (radius ~0.3, center at vert=0.3) overlap the sensor (vert=[0, 0.8])
+      // when rolling through. Aligned to the sample's local frame so the
+      // box tilts with the bank on banked turns.
+      const tmpMat = new THREE.Matrix4().makeBasis(s.right, s.up, s.tangent);
+      const quat = new THREE.Quaternion().setFromRotationMatrix(tmpMat);
+      const pos = s.position.clone().addScaledVector(s.up, boxHalf);
+      powerUpPlacements.push({
+        id: `pu_${nextId++}`,
+        position: { x: pos.x, y: pos.y, z: pos.z },
+        rotation: { x: quat.x, y: quat.y, z: quat.z, w: quat.w },
+        halfExtents,
+        arclength: s.arclength
+      });
+      nextArc = s.arclength + minSpacing;
+    }
+  }
+
   // Place finish detection and marker right at the end of the track — the
   // catch basin past the end corrals marbles that roll off, so there's no
   // reason to finish them early. Sampling at the very last sample also avoids
@@ -845,6 +884,7 @@ export function generateTrack(rng, settings) {
     floorVertices: floor.vertices,
     floorIndices: floor.indices,
     obstaclePlacements,
+    powerUpPlacements,
     catchBox,
     startPen,
     finishMarker,

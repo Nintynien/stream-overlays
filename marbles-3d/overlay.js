@@ -4,6 +4,19 @@ import { Physics } from './physics.js';
 import { Renderer } from './renderer.js';
 import { generateTrack, nearestArclength } from './track.js';
 import { resolveSkin, setViewerSkin, SKIN_BY_ID, getLastWinner, setLastWinner } from './skins.js';
+import {
+  POWERUPS, POWERUP_BY_ID,
+  pickRandomPowerUp, pickRandomChaosPowerUp
+} from './powerups.js';
+
+// Emoji shown next to a marble's name on the leaderboard for each active
+// effect. Kept here (not in powerups.js) because effect kinds and power-up
+// ids don't always match — e.g. red shell knockback uses kind 'staggered'.
+const EFFECT_KIND_EMOJI = {
+  star: '⭐', shield: '🛡️', mini: '🍄', mega: '🟥',
+  antigrav: '🌙', magnet: '🧲', rocket: '🚀',
+  boost: '💨', frozen: '❄️', staggered: '💫'
+};
 
 // ========== PRNG (mulberry32) ==========
 function mulberry32(seed) {
@@ -97,6 +110,20 @@ export class Marbles3DOverlay extends BaseOverlay {
     this.renderer = null;
     this.track = null;
 
+    // Track-spawned hazards (banana, bomb). Keyed by hazard id; physics
+    // owns the corresponding sensor body and routes hit events back to
+    // onProjectileHit. updateHazards ticks fuses and max-age expiry.
+    this.hazards = new Map();
+    this._nextHazardId = 0;
+    // Per-box pickup cooldowns. After a marble triggers a power-up, that
+    // specific box is hidden + ignored for 2s before it can be re-collected.
+    // Keyed by box id, value is the wall-clock ms when the box reactivates.
+    this.boxCooldowns = new Map();
+    this.boxCooldownMs = 2000;
+    // Pickup popup state. Most recent acquisition is drawn at the bottom of
+    // the HUD until expiresAt. New pickups overwrite — keeps it simple.
+    this.lastPickupPopup = null;
+
     this.countdownStartMs = 0;
     this.raceStartMs = 0;
     this.raceEndMs = 0;
@@ -180,7 +207,49 @@ export class Marbles3DOverlay extends BaseOverlay {
       this.handleCameraCommand(cmd, arg);
     } else if (cmd === '!skin' && this.state === 'lobby') {
       this.handleSkinCommand(username, arg);
+    } else if (cmd === '!powerup' && isMod && this.state === 'racing') {
+      this.handlePowerupCommand(parts[1], parts.slice(2).join(' '), now);
+    } else if (cmd === '!chaos' && isMod && this.state === 'racing') {
+      this.handleChaosCommand(now);
     }
+  }
+
+  handlePowerupCommand(idArg, userArg, now) {
+    const id = (idArg || '').toLowerCase();
+    const powerup = POWERUP_BY_ID.get(id);
+    if (!powerup) {
+      console.log('[marbles-3d] !powerup unknown id:', idArg,
+        '— valid:', POWERUPS.map(p => p.id).join(', '));
+      return;
+    }
+    let target;
+    if (userArg) {
+      const lower = userArg.toLowerCase();
+      for (const key of this.marbles.keys()) {
+        if (key.toLowerCase() === lower) { target = this.marbles.get(key); break; }
+      }
+      if (!target || target.finished) {
+        console.log('[marbles-3d] !powerup target not found or finished:', userArg);
+        return;
+      }
+    } else {
+      const candidates = Array.from(this.marbles.values()).filter(m => !m.finished);
+      if (candidates.length === 0) return;
+      target = candidates[Math.floor(Math.random() * candidates.length)];
+    }
+    console.log(`[marbles-3d] !powerup ${id} → ${target.username}`);
+    this.applyPowerUp(target, powerup, now);
+  }
+
+  handleChaosCommand(now) {
+    let count = 0;
+    for (const m of this.marbles.values()) {
+      if (m.finished) continue;
+      const p = pickRandomChaosPowerUp();
+      this.applyPowerUp(m, p, now);
+      count++;
+    }
+    console.log(`[marbles-3d] !chaos applied to ${count} marbles`);
   }
 
   handleSkinCommand(username, arg) {
@@ -228,6 +297,20 @@ export class Marbles3DOverlay extends BaseOverlay {
     this.physics.buildTrack(this.track);
     this.renderer.buildTrackMesh(this.track);
 
+    // Power-up boxes: sensor cuboids (physics) + visible rotating cubes
+    // (renderer). The intersection callback fires every time a marble enters
+    // or leaves a sensor — overlay routes "enter" events to a fresh pickup
+    // and "exit" events to clearing the overlap set so re-entry retriggers.
+    this.physics.buildPowerUpSensors(this.track,
+      (mId, bId, started) => this.onBoxIntersection(mId, bId, started));
+    this.physics.onProjectileHit =
+      (mId, pId, kind) => this.onProjectileHit(mId, pId, kind);
+    if (this.track.powerUpPlacements) {
+      for (const p of this.track.powerUpPlacements) {
+        this.renderer.addPowerUpBoxMesh(p);
+      }
+    }
+
     const spawn = this.track.spawnPose.position;
     const cam = this.renderer.camera;
     cam.position.set(spawn.x - 5, spawn.y + 3, 8);
@@ -238,18 +321,28 @@ export class Marbles3DOverlay extends BaseOverlay {
   }
 
   teardownRace() {
+    // Clear effects (and their halos/restores) first so removing the marble
+    // mesh doesn't leave dangling halo refs and restore handlers don't run
+    // against a removed body.
+    for (const m of this.marbles.values()) {
+      this.clearMarbleEffects(m);
+    }
     if (this.physics) {
       for (const m of this.marbles.values()) {
         this.physics.removeMarble(m.id);
       }
-      this.physics.clearTrack();
+      this.physics.clearTrack(); // also drops power-up sensors and projectiles
     }
     if (this.renderer) {
       for (const m of this.marbles.values()) {
         this.renderer.removeMarbleMesh(m.id);
       }
-      this.renderer.clearTrackMesh();
+      this.renderer.clearTrackMesh(); // also drops box meshes and projectiles
     }
+    this.hazards.clear();
+    this._nextHazardId = 0;
+    this.boxCooldowns.clear();
+    this.lastPickupPopup = null;
     this.marbles.clear();
     this.finishOrder = [];
     this.track = null;
@@ -334,7 +427,20 @@ export class Marbles3DOverlay extends BaseOverlay {
       stuckStreak: 0,
       heldUntilMs: 0,
       heldPosition: null,
-      heldActive: false,
+      // Layered sensor reasons. The marble's collider becomes a sensor when
+      // any reason is present (rescue teleport, freeze ray, etc). Replaces
+      // the older heldActive boolean which clobbered other reasons on rescue
+      // restore.
+      sensorReasons: new Set(),
+      // Active effect descriptors. Each entry: { kind, expiresAt, restore?,
+      // tickFn? }. updateActiveEffects ticks them each frame and runs
+      // restore on expiry. Halos are managed in parallel via renderer.
+      activeEffects: [],
+      // Set<boxId> of currently-overlapping power-up boxes. Pickup fires on
+      // intersection start; entries are added then; intersection end clears
+      // them so the marble can re-pickup after exiting and re-entering.
+      activeBoxOverlaps: new Set(),
+      lastPickupAtMs: 0,
       // Interpolated transform — computed each render frame from the physics
       // prev/curr snapshots so the marble moves smoothly between fixed-timestep
       // physics sub-steps. Camera target and HUD labels also read from these.
@@ -403,7 +509,322 @@ export class Marbles3DOverlay extends BaseOverlay {
     this.state = 'finished';
     this.raceEndMs = performance.now();
     this.resetCameraMode();
+    // Clear all in-flight effects (timed buffs, debuffs) so they don't keep
+    // ticking through the results screen, and despawn hazards so leftover
+    // bananas/bombs don't visibly hang around.
+    for (const m of this.marbles.values()) {
+      this.clearMarbleEffects(m);
+    }
+    for (const id of Array.from(this.hazards.keys())) {
+      this.removeHazard(id);
+    }
+    // Restore visibility for any gems still in cooldown so the results
+    // screen doesn't have invisible holes wherever the camera lingers.
+    for (const boxId of this.boxCooldowns.keys()) {
+      this.renderer.setPowerUpBoxVisible(boxId, true);
+    }
+    this.boxCooldowns.clear();
+    this.lastPickupPopup = null;
     console.log(`[marbles-3d] race ended: ${reason}`);
+  }
+
+  // ========== Power-up framework ==========
+
+  // Layered sensor toggling — many effects (rescue, freeze, future ghost
+  // states) want the marble's collider in sensor mode. Tracking reasons in a
+  // Set means they don't clobber each other on restore.
+  addSensorReason(m, reason) {
+    if (m.sensorReasons.has(reason)) return;
+    m.sensorReasons.add(reason);
+    if (m.sensorReasons.size === 1) {
+      this.physics.setMarbleSensor(m.id, true);
+    }
+  }
+
+  removeSensorReason(m, reason) {
+    if (!m.sensorReasons.has(reason)) return;
+    m.sensorReasons.delete(reason);
+    if (m.sensorReasons.size === 0) {
+      this.physics.setMarbleSensor(m.id, false);
+    }
+  }
+
+  hasEffect(m, kind) {
+    return m.activeEffects?.some(e => e.kind === kind) ?? false;
+  }
+
+  // Targeting helpers. All filter !finished and !frozen so attacks can't
+  // chain on the same already-disabled marble. nearestArclength's hint window
+  // can lag a frame after a teleport, so callers that snap a marble's
+  // position should also set m.arclength manually before relying on these.
+
+  findMarbleAhead(m) {
+    let best = null;
+    let bestArc = Infinity;
+    for (const other of this.marbles.values()) {
+      if (other === m) continue;
+      if (other.finished) continue;
+      if (other.sensorReasons.has('frozen')) continue;
+      if (other.arclength <= m.arclength) continue;
+      if (other.arclength < bestArc) {
+        bestArc = other.arclength;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  findLeader(excludeId = null) {
+    let best = null;
+    let bestArc = -Infinity;
+    for (const other of this.marbles.values()) {
+      if (other.finished) continue;
+      if (excludeId && other.id === excludeId) continue;
+      if (other.sensorReasons.has('frozen')) continue;
+      if (other.arclength > bestArc) {
+        bestArc = other.arclength;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  findRandomOther(m) {
+    const candidates = [];
+    for (const other of this.marbles.values()) {
+      if (other === m) continue;
+      if (other.finished) continue;
+      if (other.sensorReasons.has('frozen')) continue;
+      candidates.push(other);
+    }
+    if (candidates.length === 0) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  // Star: total damage immunity. Shield: absorb one and consume.
+  // Returns true if the hit was absorbed (caller should skip applying the
+  // damage payload). Banana/bomb still consume themselves on a Star marble —
+  // makes Star feel rewarding and prevents bananas from "guarding" themselves.
+  absorbHit(target, now) {
+    if (!target?.activeEffects) return false;
+    if (this.hasEffect(target, 'star')) return true;
+    const idx = target.activeEffects.findIndex(e => e.kind === 'shield');
+    if (idx !== -1) {
+      target.activeEffects.splice(idx, 1);
+      this.renderer.setMarbleEffectVisual(target.id, 'shield', false);
+      return true;
+    }
+    return false;
+  }
+
+  // Used by freeze ray and blue shell. Pins the target via sensor + per-tick
+  // zero-velocity, identical pattern to rescue but with its own reason key
+  // so rescue restoring doesn't end an active freeze.
+  applyFreeze(target, now, durationMs) {
+    const t = target.body.translation();
+    const heldPos = { x: t.x, y: t.y + 0.05, z: t.z };
+    this.addSensorReason(target, 'frozen');
+    target.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    target.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    this.addEffect(target, {
+      kind: 'frozen',
+      expiresAt: now + durationMs,
+      tickFn: (ctx, marble) => {
+        marble.body.setTranslation(heldPos, true);
+        marble.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        marble.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      },
+      restore: (ctx, marble) => {
+        ctx.removeSensorReason(marble, 'frozen');
+      }
+    });
+  }
+
+  // Push an effect descriptor onto a marble. Refresh-by-replace: same kind
+  // already present is dropped without running its restore (the new apply
+  // already re-asserted the state, so re-running the old restore would undo
+  // it — e.g. mini's restore would set radius back to base while we still
+  // want it shrunk).
+  addEffect(marble, descriptor) {
+    if (!marble) return;
+    const existingIdx = marble.activeEffects.findIndex(e => e.kind === descriptor.kind);
+    if (existingIdx !== -1) {
+      marble.activeEffects.splice(existingIdx, 1);
+    }
+    marble.activeEffects.push(descriptor);
+    if (descriptor.kind) {
+      this.renderer.setMarbleEffectVisual(marble.id, descriptor.kind, true);
+    }
+  }
+
+  applyPowerUp(activator, powerup, now) {
+    if (!activator || !powerup) return;
+    if (activator.finished) return;
+    let descriptors;
+    try {
+      descriptors = powerup.apply(this, activator, now);
+    } catch (err) {
+      console.error('[marbles-3d] power-up apply failed:', powerup.id, err);
+      return;
+    }
+    if (descriptors) {
+      for (const d of descriptors) {
+        const target = d.target ?? activator;
+        delete d.target;
+        this.addEffect(target, d);
+      }
+    }
+    this.lastPickupPopup = {
+      username: activator.username,
+      userColor: activator.color,
+      name: powerup.name,
+      emoji: powerup.emoji,
+      color: powerup.color,
+      expiresAt: now + 1500
+    };
+  }
+
+  onBoxIntersection(marbleId, boxId, started) {
+    const m = this.marbles.get(marbleId);
+    if (!m) return;
+    if (started) {
+      // Already overlapping — don't double-fire if Rapier emits a second
+      // start without an intervening stop (shouldn't happen, but cheap to guard).
+      if (m.activeBoxOverlaps.has(boxId)) return;
+      m.activeBoxOverlaps.add(boxId);
+      // Pickup gating: state must be racing, marble not finished, and a tiny
+      // safety net cooldown to handle event jitter.
+      if (this.state !== 'racing') return;
+      if (m.finished) return;
+      const now = performance.now();
+      // Per-box cooldown: a recently-collected box stays hidden+inert for 2s.
+      // Other marbles still get intersection events (so they're tracked for
+      // overlap state), but no power-up fires.
+      const cooldownExpires = this.boxCooldowns.get(boxId);
+      if (cooldownExpires !== undefined && now < cooldownExpires) return;
+      if (now - m.lastPickupAtMs < 250) return;
+      m.lastPickupAtMs = now;
+      const powerup = pickRandomPowerUp();
+      this.applyPowerUp(m, powerup, now);
+      // Hide the gem and start the cooldown timer. updateBoxCooldowns will
+      // reveal and clear the entry once the timer expires.
+      this.boxCooldowns.set(boxId, now + this.boxCooldownMs);
+      this.renderer.setPowerUpBoxVisible(boxId, false);
+    } else {
+      m.activeBoxOverlaps.delete(boxId);
+    }
+  }
+
+  updateBoxCooldowns(now) {
+    if (this.boxCooldowns.size === 0) return;
+    for (const [boxId, expiresAt] of this.boxCooldowns) {
+      if (now >= expiresAt) {
+        this.boxCooldowns.delete(boxId);
+        this.renderer.setPowerUpBoxVisible(boxId, true);
+      }
+    }
+  }
+
+  onProjectileHit(marbleId, projectileId, kind) {
+    if (this.state !== 'racing') return;
+    const m = this.marbles.get(marbleId);
+    const hazard = this.hazards.get(projectileId);
+    if (!m || !hazard) return;
+    if (m.finished) return;
+    if (typeof hazard.onHit !== 'function') return;
+    const now = performance.now();
+    const consumed = hazard.onHit(this, m, hazard, now);
+    if (consumed) this.removeHazard(projectileId);
+  }
+
+  spawnHazard(kind, position, opts = {}) {
+    const id = `${kind}_${this._nextHazardId++}`;
+    const radius = opts.radius ?? 0.22;
+    this.physics.addProjectile(id, kind, position, radius,
+      { isStatic: true, isSensor: true });
+    this.renderer.spawnProjectile(id, kind, position, { radius });
+    const hazard = {
+      id, kind,
+      position: { x: position.x, y: position.y, z: position.z },
+      radius,
+      owner: opts.owner,
+      spawnedAt: opts.spawnedAt ?? performance.now(),
+      maxAgeMs: opts.maxAgeMs ?? 30000,
+      ownerImmunityMs: opts.ownerImmunityMs ?? 0,
+      explodesAt: opts.explodesAt,
+      explosionRadius: opts.explosionRadius,
+      onHit: opts.onHit,
+      onExplode: opts.onExplode
+    };
+    this.hazards.set(id, hazard);
+    return hazard;
+  }
+
+  removeHazard(id) {
+    if (!this.hazards.has(id)) return;
+    this.physics.removeProjectile(id);
+    this.renderer.removeProjectile(id);
+    this.hazards.delete(id);
+  }
+
+  updateHazards(now) {
+    if (this.hazards.size === 0) return;
+    const expired = [];
+    for (const h of this.hazards.values()) {
+      if (h.explodesAt !== undefined && now >= h.explodesAt) {
+        try { h.onExplode?.(this, h, now); }
+        catch (err) { console.error('[marbles-3d] hazard explode failed:', err); }
+        expired.push(h.id);
+        continue;
+      }
+      if (now - h.spawnedAt > h.maxAgeMs) {
+        expired.push(h.id);
+      }
+    }
+    for (const id of expired) this.removeHazard(id);
+  }
+
+  updateActiveEffects(m, nowMs, dt) {
+    // Iterate by index so we can splice expired without breaking iteration.
+    for (let i = m.activeEffects.length - 1; i >= 0; i--) {
+      const e = m.activeEffects[i];
+      if (nowMs >= e.expiresAt) {
+        try { e.restore?.(this, m); }
+        catch (err) { console.error('[marbles-3d] effect restore failed:', e.kind, err); }
+        m.activeEffects.splice(i, 1);
+        if (e.kind) this.renderer.setMarbleEffectVisual(m.id, e.kind, false);
+        continue;
+      }
+      if (e.tickFn) {
+        try { e.tickFn(this, m, dt, nowMs); }
+        catch (err) { console.error('[marbles-3d] effect tick failed:', e.kind, err); }
+      }
+    }
+  }
+
+  clearMarbleEffects(m) {
+    if (!m.activeEffects?.length) {
+      // Still clear non-rescue sensor reasons in case any leaked.
+      if (m.sensorReasons) {
+        for (const r of Array.from(m.sensorReasons)) {
+          if (r !== 'rescue') this.removeSensorReason(m, r);
+        }
+      }
+      return;
+    }
+    for (const e of m.activeEffects) {
+      try { e.restore?.(this, m); }
+      catch (err) { console.error('[marbles-3d] effect restore failed:', e.kind, err); }
+      if (e.kind && this.renderer) this.renderer.setMarbleEffectVisual(m.id, e.kind, false);
+    }
+    m.activeEffects = [];
+    // Drop all non-rescue sensor reasons (rescue manages its own lifecycle in
+    // updateMarble; effects own their own reasons via restore handlers).
+    if (m.sensorReasons) {
+      for (const r of Array.from(m.sensorReasons)) {
+        if (r !== 'rescue') this.removeSensorReason(m, r);
+      }
+    }
   }
 
   sampleAtArclength(arclength) {
@@ -664,8 +1085,18 @@ export class Marbles3DOverlay extends BaseOverlay {
 
     if (this.track && (this.state === 'countdown' || this.state === 'racing' || this.state === 'finished')) {
       for (const m of this.marbles.values()) {
-        this.updateMarble(m, nowMs);
+        this.updateMarble(m, nowMs, realDt);
       }
+    }
+
+    // Tick track-spawned hazards (banana max-age, bomb fuse).
+    if (this.state === 'racing' && this.hazards.size > 0) {
+      this.updateHazards(nowMs);
+    }
+
+    // Re-show power-up gems whose 2s cooldowns have elapsed.
+    if (this.state === 'racing' && this.boxCooldowns.size > 0) {
+      this.updateBoxCooldowns(nowMs);
     }
 
     if (this.state === 'countdown') {
@@ -686,7 +1117,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     }
   }
 
-  updateMarble(m, nowMs) {
+  updateMarble(m, nowMs, dt) {
     const t = m.body.translation();
     const s = this.sampleAtArclength(m.arclength);
 
@@ -694,8 +1125,10 @@ export class Marbles3DOverlay extends BaseOverlay {
     // physics takes over again. Gives other racers a tangible advantage when
     // someone falls off the track. The collider is flipped to a sensor for
     // the hold so other racers pass through the pinned marble instead of
-    // piling up behind it.
-    if (m.heldActive) {
+    // piling up behind it. Sensor state is layered via sensorReasons so a
+    // concurrent freeze ray or other sensor-based effect doesn't get clobbered
+    // when rescue restores.
+    if (m.sensorReasons.has('rescue')) {
       if (nowMs < m.heldUntilMs) {
         m.body.setTranslation(m.heldPosition, true);
         m.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -705,8 +1138,7 @@ export class Marbles3DOverlay extends BaseOverlay {
         this.physics.syncMarbleTransform(m.id);
         return;
       }
-      m.body.collider(0).setSensor(false);
-      m.heldActive = false;
+      this.removeSensorReason(m, 'rescue');
     }
 
     // Kill-plane recovery: teleport back to the nearest spline point if the
@@ -722,8 +1154,7 @@ export class Marbles3DOverlay extends BaseOverlay {
       // Snap interpolation state to the rescue point so the marble doesn't
       // streak across the scene from its fallen position.
       this.physics.syncMarbleTransform(m.id);
-      m.body.collider(0).setSensor(true);
-      m.heldActive = true;
+      this.addSensorReason(m, 'rescue');
       m.heldUntilMs = nowMs + 1000;
       m.heldPosition = { x: recover.x, y: recover.y, z: recover.z };
       m.stuckCheckMs = nowMs + 1000;
@@ -734,6 +1165,14 @@ export class Marbles3DOverlay extends BaseOverlay {
     const worldPos = new THREE.Vector3(t.x, t.y, t.z);
     m.arclength = nearestArclength(this.track, worldPos, m.arclength);
 
+    // Tick active power-up effects between arclength update and finish
+    // detection. Effects need fresh arclength for targeting/centerline lookups
+    // (magnet, rocket); but expiring effects shouldn't run after a marble is
+    // declared finished, which clears effects below.
+    if (m.activeEffects.length > 0) {
+      this.updateActiveEffects(m, nowMs, dt);
+    }
+
     if (!m.finished && this.state === 'racing' &&
         (m.arclength >= this.track.finishArclength || this.isInCatchBox(t))) {
       m.finished = true;
@@ -743,6 +1182,9 @@ export class Marbles3DOverlay extends BaseOverlay {
       // Slow the marble so it doesn't barrel off the end of the finish platform.
       const v = m.body.linvel();
       m.body.setLinvel({ x: v.x * 0.3, y: v.y, z: v.z * 0.3 }, true);
+      // Clear effects on finish so a Star marble doesn't keep buffing itself
+      // through the results screen and so finished marbles can't be targeted.
+      this.clearMarbleEffects(m);
       console.log(`[marbles-3d] ${m.username} finished in ${(m.finishTime / 1000).toFixed(2)}s`);
       return;
     }
@@ -751,8 +1193,13 @@ export class Marbles3DOverlay extends BaseOverlay {
 
     // Stuck-detection nudge: every 2s, if the marble hasn't advanced at least
     // 0.8m of arclength, kick it along the track tangent. Escalating speed
-    // + small hop on 2nd+ failure clears valleys and ramp crests.
-    if (nowMs - m.stuckCheckMs >= 2000) {
+    // + small hop on 2nd+ failure clears valleys and ramp crests. Skip when
+    // an effect is intentionally violating progress (Star can tunnel; freeze
+    // pins in place by design).
+    if (this.hasEffect(m, 'star') || this.hasEffect(m, 'frozen')) {
+      m.stuckCheckMs = nowMs;
+      m.stuckCheckArclength = m.arclength;
+    } else if (nowMs - m.stuckCheckMs >= 2000) {
       const progress = m.arclength - m.stuckCheckArclength;
       if (progress < 0.8) {
         m.stuckStreak += 1;
@@ -1026,7 +1473,70 @@ export class Marbles3DOverlay extends BaseOverlay {
       ctx.fillStyle = '#ffffff';
       const name = m.username.length > 16 ? m.username.slice(0, 15) + '…' : m.username;
       ctx.fillText(`${i + 1}. ${name}${m.finished ? ' ✓' : ''}`, lbX + 38, y);
+      // Active effect badges to the right of the name. Cap at 3 to keep the
+      // row compact even when a marble has stacked self-buffs.
+      if (m.activeEffects?.length) {
+        const badges = [];
+        for (const e of m.activeEffects) {
+          const emoji = EFFECT_KIND_EMOJI[e.kind];
+          if (emoji) badges.push(emoji);
+          if (badges.length >= 3) break;
+        }
+        if (badges.length) {
+          ctx.font = '15px system-ui, sans-serif';
+          ctx.fillText(badges.join(' '), lbX + lbW - 12 - badges.length * 18, y + 1);
+          ctx.font = 'bold 18px system-ui, sans-serif';
+        }
+      }
     }
+
+    this.drawPickupPopup(ctx, vw, vh, nowMs);
+  }
+
+  drawPickupPopup(ctx, vw, vh, nowMs) {
+    const p = this.lastPickupPopup;
+    if (!p || nowMs > p.expiresAt) return;
+    const remaining = p.expiresAt - nowMs;
+    // Quick fade in (first 100ms) and lingering fade out over the last 600ms.
+    const lifetime = 1500;
+    const elapsed = lifetime - remaining;
+    let alpha = 1;
+    if (elapsed < 100) alpha = elapsed / 100;
+    else if (remaining < 600) alpha = remaining / 600;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    ctx.font = 'bold 22px system-ui, sans-serif';
+    ctx.textBaseline = 'middle';
+
+    // Segmented draw — username uses the player's marble color, the arrow
+    // is neutral, and the emoji + power-up name use the power-up's color.
+    // Measuring each segment separately and drawing left-aligned avoids the
+    // canvas API's lack of mid-string color changes.
+    const segments = [
+      { text: p.username,      color: p.userColor },
+      { text: '  →  ',         color: 'rgba(255,255,255,0.75)' },
+      { text: `${p.emoji}  `,  color: '#ffffff' },
+      { text: p.name,          color: p.color }
+    ];
+    let totalWidth = 0;
+    for (const seg of segments) {
+      seg.width = ctx.measureText(seg.text).width;
+      totalWidth += seg.width;
+    }
+
+    const panelW = totalWidth + 50;
+    const panelH = 50;
+    this.drawPanel(ctx, vw / 2 - panelW / 2, vh - 130, panelW, panelH, 0.78);
+
+    ctx.textAlign = 'left';
+    let x = vw / 2 - totalWidth / 2;
+    const y = vh - 105;
+    for (const seg of segments) {
+      ctx.fillStyle = seg.color;
+      ctx.fillText(seg.text, x, y);
+      x += seg.width;
+    }
+    ctx.restore();
   }
 
   drawFinishedHud(ctx, vw, vh) {
