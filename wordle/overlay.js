@@ -102,7 +102,9 @@ export class WordleOverlay extends BaseOverlay {
   // ── Message Handling ──
 
   onMessage(message) {
-    const text = message.message.trim().toLowerCase();
+    // Strip invisible Unicode format chars (e.g. Twitch's U+E0020-U+E007F tag
+    // characters appended to bypass duplicate-message filtering) before parsing.
+    const text = message.message.replace(/\p{Cf}/gu, '').trim().toLowerCase();
 
     // Mod commands — always processed
     if (message.moderator) {
