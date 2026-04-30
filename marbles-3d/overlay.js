@@ -205,7 +205,7 @@ export class Marbles3DOverlay extends BaseOverlay {
     } else if ((cmd === '!camera' || cmd === '!cam' || cmd === '!spectate') && isMod &&
                (this.state === 'countdown' || this.state === 'racing' || this.state === 'finished')) {
       this.handleCameraCommand(cmd, arg);
-    } else if (cmd === '!skin' && this.state === 'lobby') {
+    } else if (cmd === '!skin') {
       this.handleSkinCommand(username, arg);
     } else if (cmd === '!powerup' && isMod && this.state === 'racing') {
       this.handlePowerupCommand(parts[1], parts.slice(2).join(' '), now);
