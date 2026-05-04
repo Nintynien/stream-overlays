@@ -36,6 +36,7 @@ export class ContextoOverlay extends BaseOverlay {
     this.inflight = new Set();
     this.queue = [];
     this.workerRunning = false;
+    this.lastRequestStartedAt = 0;
     this.apiCallCount = 0;
 
     this.ui = {};
@@ -176,11 +177,18 @@ export class ContextoOverlay extends BaseOverlay {
     this.workerRunning = true;
 
     while (this.queue.length) {
+      // Throttle: ensure at least MIN_REQUEST_SPACING_MS since the previous request *started*.
+      // Tracked across worker runs so sparse-but-steady chat can't bypass the cap.
+      const sinceLast = Date.now() - this.lastRequestStartedAt;
+      if (sinceLast < MIN_REQUEST_SPACING_MS) {
+        await sleep(MIN_REQUEST_SPACING_MS - sinceLast);
+      }
+
       const word = this.queue.shift();
       const requestedGameId = this.gameId;
       this.updateDebug();
 
-      const startedAt = Date.now();
+      this.lastRequestStartedAt = Date.now();
       try {
         const result = await this.fetchGuess(requestedGameId, word);
         // Drop result if the game changed or ended while we were waiting
@@ -203,13 +211,6 @@ export class ContextoOverlay extends BaseOverlay {
       } finally {
         this.inflight.delete(word);
         this._pendingAttribution?.delete(word);
-      }
-
-      // Only gate the NEXT request if more are pending
-      if (this.queue.length) {
-        const elapsed = Date.now() - startedAt;
-        const wait = Math.max(0, MIN_REQUEST_SPACING_MS - elapsed);
-        if (wait > 0) await sleep(wait);
       }
     }
 
