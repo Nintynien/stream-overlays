@@ -196,9 +196,10 @@ export class ContextoOverlay extends BaseOverlay {
           this.markFeedInvalid(word);
         }
       } catch (err) {
-        // Transient network error — don't poison the cache; just drop from inflight so a
-        // future guess can retry. Log for debug visibility.
-        if (this.config.debug) console.warn('Contexto fetch failed for', word, err);
+        // Transient network/proxy error — don't poison the cache so a future guess can retry,
+        // but mark the feed entry as failed so the streamer can see something went wrong.
+        console.warn('[contexto] fetch failed for', word, err);
+        this.markFeedFailed(word, err);
       } finally {
         this.inflight.delete(word);
         this._pendingAttribution?.delete(word);
@@ -359,6 +360,18 @@ export class ContextoOverlay extends BaseOverlay {
       entry.classList.add('feed-invalid');
       const rankSpan = entry.querySelector('.feed-rank');
       if (rankSpan) rankSpan.textContent = '✗';
+    });
+  }
+
+  markFeedFailed(word, err) {
+    const reason = err?.message ? String(err.message).slice(0, 80) : 'fetch failed';
+    const entries = this.ui.feed.querySelectorAll(`.feed-entry.feed-pending[data-word="${cssEscape(word)}"]`);
+    entries.forEach(entry => {
+      entry.classList.remove('feed-pending');
+      entry.classList.add('feed-failed');
+      entry.title = reason;
+      const rankSpan = entry.querySelector('.feed-rank');
+      if (rankSpan) rankSpan.textContent = '⚠';
     });
   }
 

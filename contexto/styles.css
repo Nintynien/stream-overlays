@@ -262,6 +262,15 @@ body {
 }
 .feed-invalid .feed-rank { color: #b5543b; }
 
+.feed-failed {
+  background: rgba(220, 170, 60, 0.1);
+}
+.feed-failed .feed-word {
+  opacity: 0.55;
+  color: #d9a846;
+}
+.feed-failed .feed-rank { color: #d9a846; }
+
 .feed-resolved.tier-win  .feed-rank { color: #ffd54a; }
 .feed-resolved.tier-hot  .feed-rank { color: #6fbe4a; }
 .feed-resolved.tier-warm .feed-rank { color: #e3c34a; }
