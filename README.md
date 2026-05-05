@@ -108,6 +108,47 @@ file:///C:/path/to/stream-overlays/scales/index.html?twitch=your_channel
 - Touching the ground (balance <= -100 or >= 100) ends the match instantly
 - Time runs out after 90 seconds; the side with the advantage wins
 
+### Pixel Brawler
+
+Turn-based 1v1 combat between two viewers. The overlay sits idle on stream — chatters' characters wander across the bottom (using each viewer's saved class + color + hat). When two viewers `!join`, they're pulled out of the crowd into a Standoff, then trade `!attack` / `!special` turns until one wins.
+
+**URL:**
+```
+file:///C:/path/to/stream-overlays/pixel-brawler/index.html?twitch=your_channel
+```
+
+**URL Parameters:**
+- `twitch=channel_name` - Twitch channel to connect to
+- `kick=channel_name` - Kick channel to connect to
+- `debug=true` - Show debug info overlay
+- `turnSec=25` - Seconds per turn (default: 25)
+- `victorySec=10` - Seconds to display the victory banner (default: 10)
+- `animMs=2500` - Attack animation duration in ms (default: 2500)
+- `maxCrowd=12` - Max idle-crowd characters on screen at once (default: 12)
+
+**Profile commands** (anytime, anyone — saved per-viewer in `localStorage`):
+- `!class <knight|paladin|ranger|huntress|mage|enchantress|rogue|assassin>` - Pick & save your class
+- `!color <red|blue|green|purple|gold|silver|black|white|pink|cyan>` - Recolor your sprite
+- `!hat <crown|halo|party|headband|horns|hood|none>` - Add a head accessory
+
+**Battle commands:**
+- `!join` - Sign up for the next brawl using your saved class. (No saved class? You get a random one for that fight.)
+- `!attack` - Standard attack (active player only)
+- `!special` - Class special — requires meter full (3 attacks fill it)
+- `!resetbrawl` - Mod/broadcaster only — force back to idle
+
+**Classes:**
+| Class | HP | Attack | Acc | Eva | Crit | Special |
+|-------|----|--------|-----|-----|------|---------|
+| Knight | 130 | 10–18 | 75% | 30% block | 5% | Holy Strike (25–35 + acc) |
+| Ranger | 100 | 8–14 | 90% | 15% | 10% | Rain of Arrows (3× 6–10) |
+| Mage | 80 | 6–22 | 70% | 10% | 15% | Arcane Blast (30–50, ignores eva) |
+| Rogue | 75 | 9–15 | 85% | 30% | 25% | Backstab (18–28, auto-crit) |
+
+**Combat math:** d20 accuracy roll (1 = miss, 20 = crit-hit), then evasion check (knight gets 30% block instead of standard eva), then damage roll, then crit check. Specials bypass or modify these checks per class.
+
+**Viewer profile persistence:** Saved under `localStorage` key `pixel-brawler:viewer-profiles` keyed by lowercased username. Same browser source = same profiles across sessions. Storage failure (private mode etc.) is silently no-op.
+
 ### Reactive
 
 Placeholder overlay with no visuals or chat behavior yet.

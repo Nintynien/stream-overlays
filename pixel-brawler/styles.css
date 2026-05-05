@@ -1,0 +1,592 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  overflow: hidden;
+  background: transparent;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  color: #f2f2f2;
+}
+
+#overlay-container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.brawler-root {
+  position: absolute;
+  inset: 0;
+}
+
+/* ──────────────── State-driven visibility ──────────────── */
+
+.brawler-stage,
+.brawler-victory,
+.brawler-idle-hint {
+  display: none;
+}
+
+/* Idle hint stays hidden in every state — keep the idle screen clean. */
+
+.brawler-root[data-state="idle"] .crowd-layer { display: block; }
+
+.brawler-root[data-state="standoff"] .brawler-stage,
+.brawler-root[data-state="active_turn"] .brawler-stage,
+.brawler-root[data-state="animating_attack"] .brawler-stage,
+.brawler-root[data-state="victory"] .brawler-stage { display: flex; }
+
+.brawler-root[data-state="victory"] .brawler-victory { display: flex; }
+
+.brawler-root:not([data-state="idle"]) .crowd-layer .crowd-char {
+  opacity: 0 !important;
+  transition: opacity 0.4s;
+}
+
+/* ──────────────── Idle hint ──────────────── */
+
+.brawler-idle-hint {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #f2f2f2;
+  padding: 12px 28px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  font-size: 16px;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.brawler-idle-hint b {
+  color: #ffd86b;
+}
+
+/* ──────────────── Battle stage ──────────────── */
+
+.brawler-stage {
+  position: absolute;
+  inset: 0;
+  flex-direction: column;
+  background: linear-gradient(180deg,
+    rgba(20, 10, 30, 0.7) 0%,
+    rgba(40, 20, 50, 0.7) 60%,
+    rgba(20, 30, 40, 0.7) 100%);
+}
+
+.brawler-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 40px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.15);
+}
+
+.brawler-title {
+  font-size: 36px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  color: #ffd86b;
+  text-shadow: 0 0 12px rgba(255, 216, 107, 0.6), 2px 2px 0 #1a1a22;
+}
+
+.brawler-turn-indicator {
+  font-size: 32px;
+  font-weight: 900;
+  padding: 10px 22px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid #ffd86b;
+  border-radius: 8px;
+  min-width: 80px;
+  text-align: center;
+  color: #ffd86b;
+}
+
+.brawler-fight {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 0 40px;
+  position: relative;
+}
+
+.brawler-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+  transition: filter 0.3s;
+}
+
+.brawler-side:not(.active) .brawler-info {
+  opacity: 0.6;
+}
+
+.brawler-side.active .brawler-info {
+  opacity: 1;
+  filter: drop-shadow(0 0 8px rgba(255, 216, 107, 0.5));
+}
+
+.brawler-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 280px;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 14px 18px;
+  border-radius: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  transition: opacity 0.3s, filter 0.3s;
+}
+
+.brawler-name {
+  font-size: 22px;
+  font-weight: 800;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.9), 1px 1px 0 #1a1a22;
+}
+
+.brawler-class {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.brawler-pips {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0;
+}
+
+.pip {
+  width: 14px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  transform: rotate(45deg);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.pip.on {
+  background: #ffd86b;
+  border-color: #ffd86b;
+  box-shadow: 0 0 8px rgba(255, 216, 107, 0.9), 0 0 12px rgba(255, 216, 107, 0.4);
+}
+
+.brawler-hp-track {
+  width: 240px;
+  height: 24px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.brawler-hp-fill {
+  height: 100%;
+  background: linear-gradient(180deg, #7fd687 0%, #4eaa56 100%);
+  transition: width 600ms cubic-bezier(0.2, 0.8, 0.3, 1), background 300ms;
+  width: 100%;
+}
+
+.brawler-hp-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  text-shadow: 0 0 3px black, 1px 1px 0 black;
+}
+
+.brawler-arena {
+  height: 260px;
+  width: 280px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  position: relative;
+}
+
+.brawler-vs {
+  font-size: 60px;
+  font-weight: 900;
+  color: #ffd86b;
+  text-shadow: 0 0 16px rgba(255, 216, 107, 0.7), 3px 3px 0 #1a1a22;
+  letter-spacing: 4px;
+  align-self: center;
+}
+
+.brawler-status {
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  padding: 16px 24px;
+  background: rgba(0, 0, 0, 0.6);
+  margin: 0 60px 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  min-height: 28px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+}
+
+.brawler-status b {
+  color: #ffd86b;
+}
+
+/* ──────────────── Sprite system ──────────────── */
+
+/* Each sprite is a single 5×5px element painted via box-shadow chain.
+   Cell size MUST match CELL_SIZE in classes.js. */
+
+.sprite {
+  width: 5px;
+  height: 5px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  background: transparent;
+  /* box-shadow set by JS via buildSpriteShadow() */
+}
+
+.sprite-holder {
+  position: relative;
+  width: 60px;  /* SPRITE_W * CELL_SIZE = 12 * 5 */
+  height: 80px; /* SPRITE_H * CELL_SIZE = 16 * 5 */
+  transform-origin: center bottom;
+}
+
+.sprite-holder-large {
+  transform: scale(2.5);
+  transform-origin: center bottom;
+}
+
+.sprite-holder-large.mirror-x {
+  transform: scale(2.5) scaleX(-1);
+}
+
+.hat-sprite {
+  width: 5px;
+  height: 5px;
+  position: absolute;
+  left: 0;
+  /* top set by JS based on hat.offsetRow */
+  background: transparent;
+  /* box-shadow set by JS */
+}
+
+/* Battle sprite "lunge" animation when attacking */
+.brawler-side.attacking .sprite-holder-large {
+  animation: brawler-lunge 600ms ease-out;
+}
+.brawler-side[data-side="right"].attacking .sprite-holder-large {
+  animation: brawler-lunge-mirror 600ms ease-out;
+}
+
+@keyframes brawler-lunge {
+  0%, 100% { transform: scale(2.5) translateX(0); }
+  40% { transform: scale(2.5) translateX(40px); }
+}
+@keyframes brawler-lunge-mirror {
+  0%, 100% { transform: scale(2.5) scaleX(-1) translateX(0); }
+  40% { transform: scale(2.5) scaleX(-1) translateX(40px); }
+}
+
+/* Hit / evade flash on defender */
+.brawler-side.hit .sprite-holder-large {
+  animation: brawler-hit 400ms ease-out;
+}
+.brawler-side.evading .sprite-holder-large {
+  animation: brawler-evade 400ms ease-out;
+}
+
+@keyframes brawler-hit {
+  0%, 100% { filter: none; }
+  20%, 60% { filter: brightness(2.2) hue-rotate(-20deg) drop-shadow(0 0 8px #ff6663); }
+  40%, 80% { filter: none; }
+}
+
+/* Evade uses opacity blink only — no transform, so it doesn't fight the
+   mirror transform on the right-side sprite. */
+@keyframes brawler-evade {
+  0%, 100% { opacity: 1; filter: brightness(1); }
+  25%, 75% { opacity: 0.4; filter: brightness(1.5); }
+  50% { opacity: 1; filter: brightness(1.5); }
+}
+
+/* ──────────────── Damage numbers ──────────────── */
+
+.damage-number {
+  position: absolute;
+  bottom: 60%;
+  font-size: 30px;
+  font-weight: 900;
+  color: #ff6663;
+  text-shadow: 0 0 6px black, 2px 2px 0 #1a1a22;
+  pointer-events: none;
+  animation: dmg-float 1.5s ease-out forwards;
+  z-index: 5;
+}
+
+.damage-number.crit {
+  color: #ffd86b;
+  font-size: 40px;
+  text-shadow: 0 0 12px rgba(255, 216, 107, 0.9), 0 0 6px black, 2px 2px 0 #1a1a22;
+}
+
+.damage-number.miss {
+  color: #c0c0d0;
+  font-size: 22px;
+  font-weight: 800;
+  text-shadow: 0 0 6px black, 1px 1px 0 #1a1a22;
+}
+
+@keyframes dmg-float {
+  0%   { transform: translateY(0) scale(0.5); opacity: 0; }
+  20%  { transform: translateY(-15px) scale(1.2); opacity: 1; }
+  100% { transform: translateY(-100px) scale(0.95); opacity: 0; }
+}
+
+/* ──────────────── Killing-special spectacle ──────────────── */
+
+.brawler-stage.shake {
+  animation: stage-shake 600ms steps(8) infinite;
+}
+
+@keyframes stage-shake {
+  0%, 100% { transform: translate(0, 0); }
+  10% { transform: translate(-5px, 2px); }
+  20% { transform: translate(4px, -3px); }
+  30% { transform: translate(-3px, 4px); }
+  40% { transform: translate(5px, 1px); }
+  50% { transform: translate(-2px, -4px); }
+  60% { transform: translate(3px, 3px); }
+  70% { transform: translate(-4px, -1px); }
+  80% { transform: translate(2px, 4px); }
+  90% { transform: translate(-1px, -2px); }
+}
+
+.brawler-stage.slow-mo .damage-number {
+  animation-duration: 2.4s;
+}
+
+.brawler-stage.slow-mo .brawler-side.attacking .sprite-holder-large,
+.brawler-stage.slow-mo .brawler-side[data-side="right"].attacking .sprite-holder-large {
+  animation-duration: 960ms;
+}
+
+.brawler-stage.slow-mo .brawler-side.hit .sprite-holder-large,
+.brawler-stage.slow-mo .brawler-side.evading .sprite-holder-large {
+  animation-duration: 640ms;
+}
+
+/* ──────────────── Victory banner ──────────────── */
+
+.brawler-victory {
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.victory-banner {
+  text-align: center;
+  background: rgba(10, 5, 20, 0.92);
+  padding: 36px 80px;
+  border: 4px solid #ffd86b;
+  border-radius: 12px;
+  box-shadow: 0 0 60px rgba(255, 216, 107, 0.5), 0 0 20px rgba(0, 0, 0, 0.8);
+  animation: victory-burst 600ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+.victory-title {
+  font-size: 64px;
+  font-weight: 900;
+  color: #ffd86b;
+  letter-spacing: 6px;
+  text-shadow: 0 0 24px rgba(255, 216, 107, 0.8), 3px 3px 0 #1a1a22;
+  margin-bottom: 8px;
+}
+
+.victory-name {
+  font-size: 40px;
+  font-weight: 800;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.9), 2px 2px 0 #1a1a22;
+}
+
+.victory-class {
+  font-size: 18px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 4px;
+}
+
+@keyframes victory-burst {
+  0%   { transform: scale(0.4); opacity: 0; }
+  60%  { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1);   opacity: 1; }
+}
+
+/* ──────────────── Crowd layer (idle state) ──────────────── */
+
+.crowd-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+/* Pixel-art ground strip across the bottom edge during idle.
+   3px tall: dark dirt base with a 1px lighter surface line at the top. */
+.ground-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: #2a1c14;
+  box-shadow: inset 0 1px 0 #c8a878;
+  pointer-events: none;
+}
+
+/* Grass blades sit on top of the dirt and rise just above. The layer is
+   z-indexed above .crowd-char so blades visually overlap character lower
+   legs — the "walking through grass" effect. */
+.grass-layer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px; /* directly on top of the dirt */
+  height: 12px; /* room for tallest blade */
+  pointer-events: none;
+  z-index: 5;
+}
+
+.grass-blade {
+  position: absolute;
+  bottom: 0;
+  /* width / height / left / background set inline by JS for per-blade variety */
+}
+
+.crowd-char {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+.crowd-char.fading-out {
+  opacity: 0 !important;
+}
+
+.crowd-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-shadow: 0 0 3px black, 0 0 2px black, 1px 1px 0 #000;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  /* Keep name unflipped even when sprite is mirrored — sprite-holder handles its own transform */
+}
+
+.crowd-char .sprite-holder {
+  transform: scale(var(--lane-scale, 1)) scaleX(var(--face-x, 1));
+}
+
+/* ──────────────── Speech bubble (chatting state) ──────────────── */
+
+.speech-bubble {
+  position: absolute;
+  top: -22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #f8f8f0;
+  border: 2px solid #1a1a22;
+  border-radius: 14px;
+  padding: 4px 8px;
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  z-index: 2;
+}
+
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -7px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #1a1a22;
+}
+
+.speech-bubble::before {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #f8f8f0;
+  z-index: 1;
+}
+
+.dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  background: #1a1a22;
+  border-radius: 50%;
+  animation: dot-pulse 1.4s infinite;
+  opacity: 0.3;
+}
+
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes dot-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-1px); }
+}
+
+/* ──────────────── Debug info ──────────────── */
+
+#debug-info {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: monospace;
+  display: none;
+  z-index: 999;
+}
+
+#debug-info.visible {
+  display: block;
+}

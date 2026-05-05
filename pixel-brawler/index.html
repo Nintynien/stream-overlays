@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Brawler Overlay</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="overlay-container"></div>
+
+  <div id="debug-info">
+    <div>Status: <span id="status">Initializing...</span></div>
+    <div>Messages: <span id="message-count">0</span></div>
+    <div>State: <span id="state-display">idle</span></div>
+    <div>Crowd: <span id="crowd-count">0</span></div>
+  </div>
+
+  <script type="module">
+    import { PixelBrawlerOverlay } from './overlay.js';
+
+    async function init() {
+      const params = new URLSearchParams(window.location.search);
+
+      const config = {
+        twitch: {
+          enabled: !!params.get('twitch'),
+          channel: params.get('twitch') || ''
+        },
+        kick: {
+          enabled: !!params.get('kick'),
+          channel: params.get('kick') || ''
+        },
+        debug: params.get('debug') === 'true',
+        settings: {
+          turnDurationMs: params.get('turnSec')
+            ? parseInt(params.get('turnSec')) * 1000 : undefined,
+          victoryDurationMs: params.get('victorySec')
+            ? parseInt(params.get('victorySec')) * 1000 : undefined,
+          animationDurationMs: params.get('animMs')
+            ? parseInt(params.get('animMs')) : undefined,
+          maxCrowd: params.get('maxCrowd')
+            ? parseInt(params.get('maxCrowd')) : undefined,
+        }
+      };
+
+      const overlay = new PixelBrawlerOverlay(config);
+
+      const debugInfo = document.getElementById('debug-info');
+      const statusEl = document.getElementById('status');
+      const messageCountEl = document.getElementById('message-count');
+      const stateEl = document.getElementById('state-display');
+      const crowdEl = document.getElementById('crowd-count');
+      let messageCount = 0;
+
+      if (config.debug) debugInfo.classList.add('visible');
+
+      const originalOnMessage = overlay.onMessage.bind(overlay);
+      overlay.onMessage = function(message) {
+        originalOnMessage(message);
+        messageCount++;
+        messageCountEl.textContent = messageCount;
+        stateEl.textContent = overlay.gameState;
+        crowdEl.textContent = overlay.crowd.length;
+      };
+
+      // Periodic debug refresh for state/crowd that change without messages
+      if (config.debug) {
+        setInterval(() => {
+          stateEl.textContent = overlay.gameState;
+          crowdEl.textContent = overlay.crowd.length;
+        }, 250);
+      }
+
+      await overlay.init();
+      statusEl.textContent = (config.twitch.enabled || config.kick.enabled)
+        ? 'Connected' : 'No channel — debug only';
+
+      window.overlay = overlay;
+    }
+
+    init().catch(error => {
+      console.error('Failed to initialize overlay:', error);
+      document.getElementById('status').textContent = 'Error: ' + error.message;
+    });
+  </script>
+</body>
+</html>
