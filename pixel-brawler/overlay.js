@@ -513,24 +513,19 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     const colorId = profile?.color;
     const hatId = profile?.hat;
 
-    const lane = Math.floor(Math.random() * 3);
     const dir = Math.random() < 0.5 ? -1 : 1;
     const speed = 60 + Math.random() * 70;
-    // Lane 0 = back (highest on screen, smallest, faintest). Lane 2 = front
-    // (lowest on screen, biggest, fully opaque). Front-lane feet land at the
-    // grass tips so the character appears to walk through the grass.
-    const yPercent = 80 + lane * 5; // 80, 85, 90
-    const scale = lane === 0 ? 0.85 : (lane === 1 ? 0.95 : 1.0);
-    const opacity = lane === 0 ? 0.7 : (lane === 1 ? 0.85 : 1.0);
+    // Single front lane — feet land at the grass tips so characters appear to
+    // walk through the grass. ±4px jitter keeps passing sprites from perfectly
+    // overlapping pixel-for-pixel (which reads as a render glitch).
+    const yJitterPx = Math.round((Math.random() - 0.5) * 8);
 
     const startX = dir > 0 ? -80 : window.innerWidth + 80;
 
     const wrap = document.createElement('div');
     wrap.className = 'crowd-char';
     wrap.style.left = `${startX}px`;
-    wrap.style.top = `${yPercent}%`;
-    wrap.style.opacity = opacity;
-    wrap.style.setProperty('--lane-scale', scale);
+    wrap.style.top = `calc(90% + ${yJitterPx}px)`;
     wrap.style.setProperty('--face-x', dir > 0 ? '1' : '-1');
 
     const nameLabel = document.createElement('div');
@@ -566,7 +561,6 @@ export class PixelBrawlerOverlay extends BaseOverlay {
       usernameLower: username.toLowerCase(),
       classId,
       x: startX,
-      lane,
       dir,
       speed,
       behaviorState: startChatting ? 'chatting' : 'walking',
