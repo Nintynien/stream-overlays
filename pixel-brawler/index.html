@@ -33,8 +33,10 @@
         },
         debug: params.get('debug') === 'true',
         settings: {
-          turnDurationMs: params.get('turnSec')
-            ? parseInt(params.get('turnSec')) * 1000 : undefined,
+          turnGapMs: params.get('turnGapMs')
+            ? parseInt(params.get('turnGapMs')) : undefined,
+          introDurationMs: params.get('introMs')
+            ? parseInt(params.get('introMs')) : undefined,
           victoryDurationMs: params.get('victorySec')
             ? parseInt(params.get('victorySec')) * 1000 : undefined,
           animationDurationMs: params.get('animMs')

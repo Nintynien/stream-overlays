@@ -2,21 +2,26 @@ import { BaseOverlay } from '../core/base-overlay.js';
 import {
   CLASSES, SPRITE_FRAMES, HATS,
   buildSpriteShadow, gridOriginColor, classPalette, resolvePrimary,
-  randomPlayableClass, CELL_SIZE,
+  randomPlayableClass, CELL_SIZE, SPRITE_W,
 } from './classes.js';
 import {
   resolveProfile, setViewerClass, setViewerColor, setViewerHat,
 } from './profiles.js';
 
-const KNIGHT_BLOCK_CHANCE = 0.30; // overrides knight's listed eva when defending
+const KNIGHT_BLOCK_CHANCE = 0.30;
+const FIGHTER_SCALE = 1.5;
+const FIGHTER_HALF_WIDTH = (SPRITE_W * CELL_SIZE * FIGHTER_SCALE) / 2; // ~45px
+const FIGHTER_OFFSET_PX = 100;     // distance from screen center to each fighter center
+const FIGHT_ZONE_BUFFER_PX = 60;   // extra space crowd avoids beyond outer fighter edges
 
 export class PixelBrawlerOverlay extends BaseOverlay {
   constructor(config) {
     super(config);
     this.settings = {
-      turnDurationMs: config.settings?.turnDurationMs ?? 25000,
-      victoryDurationMs: config.settings?.victoryDurationMs ?? 10000,
-      animationDurationMs: config.settings?.animationDurationMs ?? 2500,
+      animationDurationMs: config.settings?.animationDurationMs ?? 1800,
+      victoryDurationMs: config.settings?.victoryDurationMs ?? 5000,
+      turnGapMs: config.settings?.turnGapMs ?? 1200,
+      introDurationMs: config.settings?.introDurationMs ?? 1500,
       tickMs: config.settings?.tickMs ?? 100,
       maxCrowd: config.settings?.maxCrowd ?? 12,
       crowdTrickleMs: config.settings?.crowdTrickleMs ?? 4500,
@@ -25,12 +30,14 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
     this.gameState = 'idle';
     this.players = [null, null];
+    this.fighterEls = [null, null];
     this.activePlayerIdx = 0;
-    this.turnEndsAt = 0;
+    this.fightZone = null; // { left, right } px range that walking crowd avoids
     this.intervalId = null;
+    this.turnTimerId = null;
 
     this.crowd = [];
-    this.recentChatters = new Map(); // usernameLower -> { username, color, lastSeenAt }
+    this.recentChatters = new Map();
     this.lastTrickleAt = 0;
 
     this.ui = {};
@@ -43,26 +50,20 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     this.intervalId = setInterval(() => this.tick(), this.settings.tickMs);
   }
 
-  // Spawn random grass blades along the dirt strip. Generated once at startup
-  // so positions are stable. Z-ordered above .crowd-char (via .grass-layer's
-  // z-index) so character lower legs are partially obscured — creates the
-  // "walking through grass" effect for front-lane chars whose feet land at
-  // the grass-tip level.
   generateGrass() {
     const layer = document.createElement('div');
     layer.className = 'grass-layer';
 
     const w = window.innerWidth;
-    const spacing = 14; // average px between blades
+    const spacing = 14;
     const numBlades = Math.floor(w / spacing);
 
     for (let i = 0; i < numBlades; i++) {
       const blade = document.createElement('div');
       blade.className = 'grass-blade';
       blade.style.left = `${i * spacing + Math.random() * (spacing - 2)}px`;
-      blade.style.height = `${5 + Math.floor(Math.random() * 7)}px`; // 5–11px
-      blade.style.width = `${1 + Math.floor(Math.random() * 2)}px`;  // 1–2px
-      // Slight green-shade variation per blade
+      blade.style.height = `${5 + Math.floor(Math.random() * 7)}px`;
+      blade.style.width = `${1 + Math.floor(Math.random() * 2)}px`;
       const tint = Math.floor(Math.random() * 35);
       blade.style.background = `rgb(${52 + tint}, ${112 + tint}, ${42 + tint})`;
       layer.appendChild(blade);
@@ -80,13 +81,11 @@ export class PixelBrawlerOverlay extends BaseOverlay {
       color: message.color,
       lastSeenAt: performance.now(),
     });
-    if (this.recentChatters.size > 50) {
-      // LRU evict
+    if (this.recentChatters.size > 100) {
       const oldestKey = this.recentChatters.keys().next().value;
       this.recentChatters.delete(oldestKey);
     }
 
-    // First !-prefixed token wins
     const tokens = message.message.trim().split(/\s+/);
     let cmdIdx = -1;
     for (let i = 0; i < tokens.length; i++) {
@@ -94,11 +93,13 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     }
     if (cmdIdx !== -1) {
       const cmd = tokens[cmdIdx].toLowerCase();
-      const arg = tokens[cmdIdx + 1] || null;
-      this.handleCommand(cmd, arg, message);
+      const args = tokens.slice(cmdIdx + 1);
+      this.handleCommand(cmd, args, message);
     }
 
-    // Crowd reaction: any chat from a chatter who's on screen → chatting state
+    // Crowd reaction: only spawn/animate fresh chatters during idle. During
+    // a battle the crowd keeps walking but we don't introduce new chatting
+    // bubbles — the focus stays on the fight.
     if (this.gameState === 'idle') {
       const existing = this.crowd.find(c => c.usernameLower === usernameLower);
       if (existing) {
@@ -109,7 +110,8 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     }
   }
 
-  handleCommand(cmd, arg, message) {
+  handleCommand(cmd, args, message) {
+    const arg = args[0] || null;
     switch (cmd) {
       case '!class':
         if (arg && setViewerClass(message.username, arg)) {
@@ -126,14 +128,14 @@ export class PixelBrawlerOverlay extends BaseOverlay {
           this.refreshCrowdAppearance(message.username.toLowerCase());
         }
         break;
-      case '!join':
-        this.handleJoin(message);
-        break;
-      case '!attack':
-        this.handlePlayerAttack(message, false);
-        break;
-      case '!special':
-        this.handlePlayerAttack(message, true);
+      case '!battle':
+        if (this.isModOrBroadcaster(message)) {
+          const a = stripAtSign(args[0] || '');
+          const b = stripAtSign(args[1] || '');
+          if (a && b && a.toLowerCase() !== b.toLowerCase()) {
+            this.startBattle(a, b);
+          }
+        }
         break;
       case '!resetbrawl':
         if (this.isModOrBroadcaster(message)) {
@@ -143,10 +145,6 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     }
   }
 
-  // Re-render an existing crowd character's sprite to reflect a fresh profile.
-  // Called from !class/!color/!hat handlers so changes are visible immediately
-  // instead of waiting for the next spawn. Mid-brawl player sprites are
-  // intentionally NOT touched — those are locked at standoff per the design.
   refreshCrowdAppearance(usernameLower) {
     const char = this.crowd.find(c => c.usernameLower === usernameLower);
     if (!char) return;
@@ -159,13 +157,11 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     char.classId = newClassId;
     char.sprite.style.setProperty('--armor-primary', resolvePrimary(newClassId, colorId));
 
-    // Pick the right frame for the current behavior state.
     const frameKey = char.behaviorState === 'sitting'
       ? 'sit'
       : (char.walkFrameAlt ? 'walk2' : 'walk1');
     this.applySpriteFrame(char.sprite, newClassId, frameKey);
 
-    // Hat lives in the same sprite-holder as the sprite. Find and replace.
     const holder = char.sprite.parentElement;
     if (holder) {
       const oldHat = holder.querySelector('.hat-sprite');
@@ -185,83 +181,168 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     return message.username.toLowerCase() === channel.toLowerCase();
   }
 
-  // ───────────────────────────── join / setup ───────────────────────────────
+  // ───────────────────────────── battle setup ───────────────────────────────
 
-  handleJoin(message) {
+  startBattle(usernameA, usernameB) {
     if (this.gameState !== 'idle') return;
-    const usernameLower = message.username.toLowerCase();
-    if (this.players[0] && this.players[0].usernameLower === usernameLower) return;
 
-    const profile = resolveProfile(message.username);
+    const playerA = this.makePlayerFromName(usernameA);
+    const playerB = this.makePlayerFromName(usernameB);
+    this.players = [playerA, playerB];
+
+    this.computeFightZone();
+    this.evictCrowdFromZone();
+    this.spawnFighter(0);
+    this.spawnFighter(1);
+
+    this.setState('battle_intro');
+    this.setStatus(
+      `<b style="color:${esc(playerA.chatColor)}">${esc(playerA.username)}</b> ` +
+      `(${CLASSES[playerA.classId].label}) ` +
+      `vs <b style="color:${esc(playerB.chatColor)}">${esc(playerB.username)}</b> ` +
+      `(${CLASSES[playerB.classId].label})!`
+    );
+
+    this.activePlayerIdx = Math.random() < 0.5 ? 0 : 1;
+    this.updateActiveHighlight();
+
+    this.scheduleNextTurn(this.settings.introDurationMs);
+  }
+
+  // Build a player object from a raw username typed into !battle.
+  // If the user has chatted recently we reuse their display-cased name and
+  // chat color; otherwise fall back to the typed name and white.
+  makePlayerFromName(rawUsername) {
+    const lower = rawUsername.toLowerCase();
+    const profile = resolveProfile(rawUsername);
     let classId = profile?.class;
     if (!classId || classId === 'villager') classId = randomPlayableClass();
 
-    const player = this.makePlayer(message.username, classId, profile?.color, profile?.hat, message.color);
+    const known = this.recentChatters.get(lower);
+    const username = known?.username || rawUsername;
+    const chatColor = known?.color || '#ffffff';
 
-    if (!this.players[0]) {
-      this.players[0] = player;
-      this.updateIdleHint();
-    } else if (!this.players[1]) {
-      this.players[1] = player;
-      this.startBrawl();
-    }
-  }
-
-  makePlayer(username, classId, colorId, hatId, chatColor) {
     const cls = CLASSES[classId];
     return {
       username,
-      usernameLower: username.toLowerCase(),
-      chatColor: chatColor || '#ffffff',
+      usernameLower: lower,
+      chatColor,
       classId,
-      colorId,
-      hatId,
+      colorId: profile?.color || null,
+      hatId: profile?.hat || null,
       hp: cls.hp,
       maxHp: cls.hp,
       special: 0,
     };
   }
 
-  // ───────────────────────────── brawl flow ─────────────────────────────────
-
-  startBrawl() {
-    this.setState('standoff');
-    this.fadeOutCrowd();
-    this.renderBrawlers();
-    this.ui.status.innerHTML =
-      `<b>${esc(this.players[0].username)}</b> (${CLASSES[this.players[0].classId].label})` +
-      ` vs <b>${esc(this.players[1].username)}</b> (${CLASSES[this.players[1].classId].label})!`;
-
-    setTimeout(() => {
-      if (this.gameState !== 'standoff') return;
-      this.activePlayerIdx = Math.random() < 0.5 ? 0 : 1;
-      this.beginTurn();
-    }, 1500);
+  computeFightZone() {
+    const cx = window.innerWidth / 2;
+    const left = cx - FIGHTER_OFFSET_PX - FIGHTER_HALF_WIDTH - FIGHT_ZONE_BUFFER_PX;
+    const right = cx + FIGHTER_OFFSET_PX + FIGHTER_HALF_WIDTH + FIGHT_ZONE_BUFFER_PX;
+    this.fightZone = { left, right };
   }
 
-  beginTurn() {
-    this.setState('active_turn');
-    this.turnEndsAt = performance.now() + this.settings.turnDurationMs;
-    this.updateTurnIndicator();
+  // Any crowd char already inside the zone gets pushed out the nearest edge.
+  evictCrowdFromZone() {
+    if (!this.fightZone) return;
+    const { left, right } = this.fightZone;
+    const now = performance.now();
+    for (const c of this.crowd) {
+      if (c.x >= left && c.x <= right) {
+        const distLeft = c.x - left;
+        const distRight = right - c.x;
+        c.dir = distLeft < distRight ? -1 : 1;
+        c.behaviorState = 'walking';
+        c.speed = Math.max(c.speed, 90);
+        c.el.style.setProperty('--face-x', c.dir > 0 ? '1' : '-1');
+        if (c.bubbleEl) this.detachSpeechBubble(c);
+        c.nextDecisionAt = now + 6000;
+        c.lastFrameSwapAt = now;
+      }
+    }
   }
 
-  handlePlayerAttack(message, isSpecial) {
-    if (this.gameState !== 'active_turn') return;
-    const attacker = this.players[this.activePlayerIdx];
-    if (!attacker || attacker.usernameLower !== message.username.toLowerCase()) return;
-    if (isSpecial && attacker.special < this.settings.specialMeterMax) return;
+  spawnFighter(idx) {
+    const player = this.players[idx];
+    const cls = CLASSES[player.classId];
+    const faceX = idx === 0 ? 1 : -1; // side 0 faces right; side 1 faces left
 
-    this.executeAttack(isSpecial);
+    const wrap = document.createElement('div');
+    wrap.className = 'fighter';
+    wrap.dataset.side = String(idx);
+
+    const hud = document.createElement('div');
+    hud.className = 'fighter-hud';
+    hud.innerHTML = `
+      <div class="fighter-name" style="color: ${esc(player.chatColor)}">${esc(player.username)}</div>
+      <div class="fighter-hp-track">
+        <div class="fighter-hp-fill"></div>
+        <div class="fighter-hp-text"></div>
+      </div>
+      <div class="fighter-meta">
+        <div class="fighter-class">${esc(cls.label)}</div>
+        <div class="fighter-pips"></div>
+      </div>
+    `;
+    wrap.appendChild(hud);
+
+    const stage = document.createElement('div');
+    stage.className = 'fighter-stage';
+    wrap.appendChild(stage);
+
+    const mirror = document.createElement('div');
+    mirror.className = 'fighter-mirror';
+    mirror.style.setProperty('--face-x', String(faceX));
+    stage.appendChild(mirror);
+
+    const holder = document.createElement('div');
+    holder.className = 'sprite-holder sprite-holder-fighter';
+    mirror.appendChild(holder);
+
+    const sprite = document.createElement('div');
+    sprite.className = 'sprite';
+    sprite.style.setProperty('--armor-primary', resolvePrimary(player.classId, player.colorId));
+    this.applySpriteFrame(sprite, player.classId, 'walk1');
+    holder.appendChild(sprite);
+
+    if (player.hatId && player.hatId !== 'none') {
+      const hat = document.createElement('div');
+      hat.className = 'hat-sprite';
+      this.applyHatFrame(hat, player.hatId);
+      holder.appendChild(hat);
+    }
+
+    this.ui.crowdLayer.appendChild(wrap);
+    this.fighterEls[idx] = { wrap, hud, stage, mirror, holder, sprite };
+
+    this.renderFighterHp(idx);
+    this.renderFighterPips(idx);
   }
 
-  executeAttack(isSpecial) {
+  // ───────────────────────────── battle loop ────────────────────────────────
+
+  scheduleNextTurn(delayMs) {
+    if (this.turnTimerId) clearTimeout(this.turnTimerId);
+    this.turnTimerId = setTimeout(() => {
+      this.turnTimerId = null;
+      this.executeAutoTurn();
+    }, delayMs);
+  }
+
+  executeAutoTurn() {
+    if (this.gameState !== 'battle_intro' && this.gameState !== 'battle_turn') return;
+
     const attackerIdx = this.activePlayerIdx;
     const defenderIdx = 1 - attackerIdx;
     const attacker = this.players[attackerIdx];
     const defender = this.players[defenderIdx];
-    const cls = CLASSES[attacker.classId];
+    if (!attacker || !defender) return;
 
-    this.setState('animating_attack');
+    const cls = CLASSES[attacker.classId];
+    const isSpecial = attacker.special >= this.settings.specialMeterMax;
+
+    this.setState('battle_animating');
 
     const spec = isSpecial ? cls.special : null;
     const hits = spec?.hits || 1;
@@ -288,7 +369,6 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
     const isKill = defender.hp <= 0;
     const isKillingSpecial = isKill && isSpecial;
-
     this.animateAttack(attackerIdx, defenderIdx, events, totalDmg, isSpecial, isKillingSpecial);
 
     const animDuration = isKillingSpecial
@@ -296,13 +376,19 @@ export class PixelBrawlerOverlay extends BaseOverlay {
       : this.settings.animationDurationMs;
 
     setTimeout(() => {
-      if (this.gameState !== 'animating_attack') return;
-      this.updateBrawlerUI();
+      if (this.gameState !== 'battle_animating') return;
+      this.renderFighterHp(attackerIdx);
+      this.renderFighterHp(defenderIdx);
+      this.renderFighterPips(attackerIdx);
+      this.renderFighterPips(defenderIdx);
+
       if (isKill) {
-        this.endBrawl(attackerIdx);
+        this.endBattle(attackerIdx);
       } else {
         this.activePlayerIdx = defenderIdx;
-        this.beginTurn();
+        this.updateActiveHighlight();
+        this.setState('battle_turn');
+        this.scheduleNextTurn(this.settings.turnGapMs);
       }
     }, animDuration);
   }
@@ -351,71 +437,62 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     return { hit, crit, evaded, blocked, damage, d20 };
   }
 
-  endBrawl(winnerIdx) {
-    this.setState('victory');
-    if (winnerIdx !== null && this.players[winnerIdx]) {
-      this.showVictory(winnerIdx);
-    } else {
-      this.ui.victory.innerHTML = '';
-      this.ui.victory.classList.remove('visible');
+  endBattle(winnerIdx) {
+    this.setState('battle_victory');
+    const loserIdx = 1 - winnerIdx;
+    const winnerEl = this.fighterEls[winnerIdx];
+    const loserEl = this.fighterEls[loserIdx];
+
+    if (winnerEl) {
+      winnerEl.wrap.classList.remove('active-turn');
+      winnerEl.wrap.classList.add('victory');
+    }
+    if (loserEl) {
+      loserEl.wrap.classList.remove('active-turn');
+      loserEl.wrap.classList.add('dying');
     }
 
+    this.showVictory(winnerIdx);
+
     setTimeout(() => {
+      for (let i = 0; i < 2; i++) {
+        if (this.fighterEls[i]) {
+          this.fighterEls[i].wrap.remove();
+          this.fighterEls[i] = null;
+        }
+      }
       this.players = [null, null];
+      this.fightZone = null;
       this.ui.victory.classList.remove('visible');
+      this.setStatus('');
       this.setState('idle');
-      this.updateIdleHint();
     }, this.settings.victoryDurationMs);
   }
 
   forceResetToIdle() {
+    if (this.turnTimerId) { clearTimeout(this.turnTimerId); this.turnTimerId = null; }
+    for (let i = 0; i < 2; i++) {
+      if (this.fighterEls[i]) {
+        this.fighterEls[i].wrap.remove();
+        this.fighterEls[i] = null;
+      }
+    }
     this.players = [null, null];
+    this.fightZone = null;
     this.ui.victory.classList.remove('visible');
+    this.setStatus('');
     this.setState('idle');
-    this.updateIdleHint();
   }
 
   // ───────────────────────────── tick ───────────────────────────────────────
 
   tick() {
-    if (this.gameState === 'active_turn') this.tickTurnTimer();
-    if (this.gameState === 'idle') this.tickCrowd();
+    this.tickCrowd();
   }
-
-  tickTurnTimer() {
-    const now = performance.now();
-    const remaining = Math.max(0, this.turnEndsAt - now);
-    this.ui.turnTimer.textContent = `${Math.ceil(remaining / 1000)}s`;
-    if (remaining > 0) return;
-
-    // Timeout — scratch damage on the active player
-    const attacker = this.players[this.activePlayerIdx];
-    if (!attacker) return;
-    attacker.hp = Math.max(0, attacker.hp - 5);
-
-    this.setState('animating_attack');
-    this.ui.status.innerHTML = `${esc(attacker.username)} stalls and stumbles! −5 HP`;
-    this.spawnDamageNumber(this.activePlayerIdx, 5, false);
-    this.updateBrawlerUI();
-
-    const isKill = attacker.hp <= 0;
-    setTimeout(() => {
-      if (this.gameState !== 'animating_attack') return;
-      if (isKill) {
-        this.endBrawl(1 - this.activePlayerIdx);
-      } else {
-        this.activePlayerIdx = 1 - this.activePlayerIdx;
-        this.beginTurn();
-      }
-    }, this.settings.animationDurationMs);
-  }
-
-  // ───────────────────────────── crowd ──────────────────────────────────────
 
   tickCrowd() {
     const now = performance.now();
 
-    // Trickle in a recent chatter when the crowd looks thin
     if (this.crowd.length < 3 &&
         this.recentChatters.size > 0 &&
         now - this.lastTrickleAt > this.settings.crowdTrickleMs) {
@@ -436,6 +513,19 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
       switch (char.behaviorState) {
         case 'walking': {
+          // Avoid the fight zone: when about to step into it, reverse.
+          if (this.fightZone) {
+            const { left, right } = this.fightZone;
+            const nextX = char.x + char.dir * char.speed * dt;
+            if (char.dir > 0 && char.x < left && nextX >= left) {
+              char.dir = -1;
+              char.el.style.setProperty('--face-x', '-1');
+            } else if (char.dir < 0 && char.x > right && nextX <= right) {
+              char.dir = 1;
+              char.el.style.setProperty('--face-x', '1');
+            }
+          }
+
           char.x += char.dir * char.speed * dt;
           if (now - char.lastFrameSwapAt > 250) {
             char.walkFrameAlt = !char.walkFrameAlt;
@@ -481,9 +571,12 @@ export class PixelBrawlerOverlay extends BaseOverlay {
   makeBehaviorDecision(char) {
     const r = Math.random();
     const now = performance.now();
-    if (r < 0.7) {
+    // While a battle is going, lean walking-only — sitting near the fight
+    // zone reads as awkward and we want crowd to keep flowing past.
+    const inFightMode = this.fightZone !== null;
+    if (r < (inFightMode ? 0.95 : 0.7)) {
       char.nextDecisionAt = now + 3000 + Math.random() * 5000;
-    } else if (r < 0.9) {
+    } else if (r < (inFightMode ? 0.99 : 0.9)) {
       char.behaviorState = 'pausing';
       char.stateExpiresAt = now + 1500 + Math.random() * 2500;
     } else {
@@ -515,11 +608,7 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
     const dir = Math.random() < 0.5 ? -1 : 1;
     const speed = 60 + Math.random() * 70;
-    // Single front lane — feet land at the grass tips so characters appear to
-    // walk through the grass. ±4px jitter keeps passing sprites from perfectly
-    // overlapping pixel-for-pixel (which reads as a render glitch).
     const yJitterPx = Math.round((Math.random() - 0.5) * 8);
-
     const startX = dir > 0 ? -80 : window.innerWidth + 80;
 
     const wrap = document.createElement('div');
@@ -605,14 +694,6 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     }
   }
 
-  fadeOutCrowd() {
-    this.crowd.forEach(c => c.el.classList.add('fading-out'));
-    setTimeout(() => {
-      this.crowd.forEach(c => c.el.remove());
-      this.crowd = [];
-    }, 400);
-  }
-
   // ───────────────────────────── sprite rendering ───────────────────────────
 
   applySpriteFrame(spriteEl, classId, frameKey) {
@@ -621,7 +702,6 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     const grid = frames[frameKey] || frames.walk1;
     const palette = classPalette(classId);
     spriteEl.style.boxShadow = buildSpriteShadow(grid, palette);
-    // Also paint the (0,0) cell as background — see gridOriginColor docs.
     spriteEl.style.background = gridOriginColor(grid, palette) || 'transparent';
   }
 
@@ -641,45 +721,10 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     root.dataset.state = 'idle';
 
     root.innerHTML = `
-      <div class="brawler-stage" id="brawler-stage">
-        <div class="brawler-header">
-          <div class="brawler-title">PIXEL BRAWLER</div>
-          <div class="brawler-turn-indicator" id="brawler-turn"></div>
-        </div>
-        <div class="brawler-fight">
-          <div class="brawler-side" data-side="left" id="brawler-side-0">
-            <div class="brawler-info">
-              <div class="brawler-name" id="brawler-name-0"></div>
-              <div class="brawler-class" id="brawler-class-0"></div>
-              <div class="brawler-pips" id="brawler-pips-0"></div>
-              <div class="brawler-hp-track">
-                <div class="brawler-hp-fill" id="brawler-hp-0"></div>
-                <div class="brawler-hp-text" id="brawler-hp-text-0"></div>
-              </div>
-            </div>
-            <div class="brawler-arena" id="brawler-arena-0"></div>
-          </div>
-          <div class="brawler-vs">VS</div>
-          <div class="brawler-side" data-side="right" id="brawler-side-1">
-            <div class="brawler-info">
-              <div class="brawler-name" id="brawler-name-1"></div>
-              <div class="brawler-class" id="brawler-class-1"></div>
-              <div class="brawler-pips" id="brawler-pips-1"></div>
-              <div class="brawler-hp-track">
-                <div class="brawler-hp-fill" id="brawler-hp-1"></div>
-                <div class="brawler-hp-text" id="brawler-hp-text-1"></div>
-              </div>
-            </div>
-            <div class="brawler-arena" id="brawler-arena-1"></div>
-          </div>
-        </div>
-        <div class="brawler-status" id="brawler-status"></div>
-      </div>
-
-      <div class="brawler-idle-hint" id="brawler-idle-hint"></div>
       <div class="crowd-layer" id="crowd-layer">
         <div class="ground-strip"></div>
       </div>
+      <div class="battle-status" id="battle-status"></div>
       <div class="brawler-victory" id="brawler-victory"></div>
     `;
 
@@ -687,43 +732,10 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
     this.ui = {
       root,
-      stage: root.querySelector('#brawler-stage'),
-      turnTimer: root.querySelector('#brawler-turn'),
-      sides: [
-        root.querySelector('#brawler-side-0'),
-        root.querySelector('#brawler-side-1'),
-      ],
-      names: [
-        root.querySelector('#brawler-name-0'),
-        root.querySelector('#brawler-name-1'),
-      ],
-      classes: [
-        root.querySelector('#brawler-class-0'),
-        root.querySelector('#brawler-class-1'),
-      ],
-      pips: [
-        root.querySelector('#brawler-pips-0'),
-        root.querySelector('#brawler-pips-1'),
-      ],
-      hpFills: [
-        root.querySelector('#brawler-hp-0'),
-        root.querySelector('#brawler-hp-1'),
-      ],
-      hpTexts: [
-        root.querySelector('#brawler-hp-text-0'),
-        root.querySelector('#brawler-hp-text-1'),
-      ],
-      arenas: [
-        root.querySelector('#brawler-arena-0'),
-        root.querySelector('#brawler-arena-1'),
-      ],
-      status: root.querySelector('#brawler-status'),
-      idleHint: root.querySelector('#brawler-idle-hint'),
       crowdLayer: root.querySelector('#crowd-layer'),
+      status: root.querySelector('#battle-status'),
       victory: root.querySelector('#brawler-victory'),
     };
-
-    this.updateIdleHint();
   }
 
   setState(state) {
@@ -731,59 +743,26 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     this.ui.root.dataset.state = state;
   }
 
-  updateIdleHint() {
-    if (this.players[0] && !this.players[1]) {
-      this.ui.idleHint.innerHTML =
-        `<b>${esc(this.players[0].username)}</b> ` +
-        `(${CLASSES[this.players[0].classId].label}) is waiting — ` +
-        `type <b>!join</b> to challenge!`;
-    } else {
-      this.ui.idleHint.innerHTML =
-        `Type <b>!class &lt;name&gt;</b> to pick a class, then <b>!join</b> to brawl. ` +
-        `Customize with <b>!color</b> and <b>!hat</b>.`;
-    }
+  setStatus(html) {
+    this.ui.status.innerHTML = html || '';
   }
 
-  renderBrawlers() {
-    for (let i = 0; i < 2; i++) {
-      const player = this.players[i];
-      const cls = CLASSES[player.classId];
-      this.ui.names[i].textContent = player.username;
-      this.ui.names[i].style.color = player.chatColor;
-      this.ui.classes[i].textContent = cls.label;
-      this.renderPips(i);
-      this.renderHp(i);
-      this.renderBrawlerSprite(i);
-    }
+  renderFighterHp(idx) {
+    const player = this.players[idx];
+    const el = this.fighterEls[idx];
+    if (!player || !el) return;
+    const fill = el.hud.querySelector('.fighter-hp-fill');
+    const text = el.hud.querySelector('.fighter-hp-text');
+    const pct = (player.hp / player.maxHp) * 100;
+    fill.style.width = `${pct}%`;
+    text.textContent = `${player.hp}/${player.maxHp}`;
   }
 
-  renderBrawlerSprite(i) {
-    const player = this.players[i];
-    const arena = this.ui.arenas[i];
-    arena.innerHTML = '';
-
-    const holder = document.createElement('div');
-    holder.className = 'sprite-holder sprite-holder-large';
-    if (i === 1) holder.classList.add('mirror-x');
-    arena.appendChild(holder);
-
-    const sprite = document.createElement('div');
-    sprite.className = 'sprite';
-    sprite.style.setProperty('--armor-primary', resolvePrimary(player.classId, player.colorId));
-    this.applySpriteFrame(sprite, player.classId, 'walk1');
-    holder.appendChild(sprite);
-
-    if (player.hatId && player.hatId !== 'none') {
-      const hat = document.createElement('div');
-      hat.className = 'hat-sprite';
-      this.applyHatFrame(hat, player.hatId);
-      holder.appendChild(hat);
-    }
-  }
-
-  renderPips(i) {
-    const player = this.players[i];
-    const pipsEl = this.ui.pips[i];
+  renderFighterPips(idx) {
+    const player = this.players[idx];
+    const el = this.fighterEls[idx];
+    if (!player || !el) return;
+    const pipsEl = el.hud.querySelector('.fighter-pips');
     pipsEl.innerHTML = '';
     for (let p = 0; p < this.settings.specialMeterMax; p++) {
       const pip = document.createElement('span');
@@ -792,55 +771,32 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     }
   }
 
-  renderHp(i) {
-    const player = this.players[i];
-    const fill = this.ui.hpFills[i];
-    const text = this.ui.hpTexts[i];
-    const pct = (player.hp / player.maxHp) * 100;
-    fill.style.width = `${pct}%`;
-    text.textContent = `${player.hp} / ${player.maxHp}`;
-  }
-
-  updateBrawlerUI() {
+  updateActiveHighlight() {
     for (let i = 0; i < 2; i++) {
-      if (this.players[i]) {
-        this.renderHp(i);
-        this.renderPips(i);
-      }
+      if (!this.fighterEls[i]) continue;
+      this.fighterEls[i].wrap.classList.toggle('active-turn', this.activePlayerIdx === i);
     }
   }
 
-  updateTurnIndicator() {
-    const active = this.players[this.activePlayerIdx];
-    if (!active) return;
-    this.ui.turnTimer.textContent = `${Math.ceil(this.settings.turnDurationMs / 1000)}s`;
-    const specReady = active.special >= this.settings.specialMeterMax;
-    this.ui.status.innerHTML =
-      `<b style="color: ${active.chatColor}">${esc(active.username)}</b>'s turn — ` +
-      `type <b>!attack</b>${specReady ? ' or <b>!special</b>' : ''}`;
-    this.ui.sides[0].classList.toggle('active', this.activePlayerIdx === 0);
-    this.ui.sides[1].classList.toggle('active', this.activePlayerIdx === 1);
-  }
-
   animateAttack(attackerIdx, defenderIdx, events, totalDmg, isSpecial, isKillingSpecial) {
-    const attackerSide = this.ui.sides[attackerIdx];
-    const defenderSide = this.ui.sides[defenderIdx];
+    const attackerWrap = this.fighterEls[attackerIdx]?.wrap;
+    const defenderWrap = this.fighterEls[defenderIdx]?.wrap;
     const attacker = this.players[attackerIdx];
     const defender = this.players[defenderIdx];
     const cls = CLASSES[attacker.classId];
 
-    attackerSide.classList.add('attacking');
+    attackerWrap?.classList.add('attacking');
     const anyHit = events.some(e => e.hit);
-    defenderSide.classList.add(anyHit ? 'hit' : 'evading');
+    defenderWrap?.classList.add(anyHit ? 'hit' : 'evading');
 
     const animDuration = isKillingSpecial
       ? this.settings.animationDurationMs * 1.6
       : this.settings.animationDurationMs;
 
     setTimeout(() => {
-      attackerSide.classList.remove('attacking');
-      defenderSide.classList.remove('hit', 'evading');
-    }, animDuration);
+      attackerWrap?.classList.remove('attacking');
+      defenderWrap?.classList.remove('hit', 'evading');
+    }, Math.min(animDuration, 700));
 
     events.forEach((evt, i) => {
       setTimeout(() => {
@@ -873,25 +829,28 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     } else {
       statusText = `${attacker.username} hits ${defender.username} for ${totalDmg} with ${attackName}`;
     }
-    this.ui.status.innerHTML = esc(statusText);
+    this.setStatus(esc(statusText));
 
     if (isKillingSpecial) {
-      this.ui.stage.classList.add('shake', 'slow-mo');
+      this.ui.crowdLayer.classList.add('shake', 'slow-mo');
       setTimeout(() => {
-        this.ui.stage.classList.remove('shake', 'slow-mo');
+        this.ui.crowdLayer.classList.remove('shake', 'slow-mo');
       }, animDuration);
     }
   }
 
   spawnDamageNumber(sideIdx, value, isCrit, isMiss = false) {
-    const arena = this.ui.arenas[sideIdx];
+    // Append to .fighter (not .fighter-stage) so the death-rotation on stage
+    // doesn't rotate damage numbers along with the corpse.
+    const wrap = this.fighterEls[sideIdx]?.wrap;
+    if (!wrap) return;
     const num = document.createElement('div');
     num.className = 'damage-number';
     if (isCrit) num.classList.add('crit');
     if (isMiss) num.classList.add('miss');
     num.textContent = typeof value === 'number' ? `−${value}` : value;
     num.style.left = `${30 + Math.random() * 40}%`;
-    arena.appendChild(num);
+    wrap.appendChild(num);
     setTimeout(() => num.remove(), 1500);
   }
 
@@ -911,6 +870,10 @@ export class PixelBrawlerOverlay extends BaseOverlay {
 
 function randInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function stripAtSign(s) {
+  return s.startsWith('@') ? s.slice(1) : s;
 }
 
 function esc(str) {
