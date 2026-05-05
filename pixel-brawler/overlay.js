@@ -614,7 +614,8 @@ export class PixelBrawlerOverlay extends BaseOverlay {
     const wrap = document.createElement('div');
     wrap.className = 'crowd-char';
     wrap.style.left = `${startX}px`;
-    wrap.style.top = `calc(90% + ${yJitterPx}px)`;
+    // Bottom-anchored so crowd feet land on the grass on any screen height.
+    wrap.style.bottom = `${14 + yJitterPx}px`;
     wrap.style.setProperty('--face-x', dir > 0 ? '1' : '-1');
 
     const nameLabel = document.createElement('div');
