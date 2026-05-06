@@ -109,7 +109,9 @@ export class ContextoOverlay extends BaseOverlay {
   // ── Message Handling ──
 
   onMessage(message) {
-    const raw = message.message.trim();
+    // Strip invisible Unicode format chars (e.g. Kick/Twitch tag chars appended
+    // to bypass duplicate-message filtering) before parsing.
+    const raw = message.message.replace(/\p{Cf}/gu, '').trim();
     if (!raw) return;
 
     // Mod commands
@@ -134,11 +136,10 @@ export class ContextoOverlay extends BaseOverlay {
     if (this.gameState !== 'playing') return;
     if (raw.startsWith('!')) return;
 
-    // First token matching guess shape
-    const match = raw.match(/[a-zA-Z'-]{2,20}/);
-    if (!match) return;
-    const word = match[0].toLowerCase();
-    if (!GUESS_REGEX.test(word)) return;
+    // Only single-word messages count as guesses — anything with whitespace or
+    // extra content is chatter, not a guess.
+    if (!GUESS_REGEX.test(raw)) return;
+    const word = raw.toLowerCase();
 
     this.handleGuess(message.username || 'anon', word, message.color);
   }
