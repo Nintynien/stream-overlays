@@ -4,6 +4,7 @@ const MAX_RANK = 30000;
 const MIN_REQUEST_SPACING_MS = 500; // 2 requests/sec cap
 const FEED_MAX = 20;
 const GUESS_REGEX = /^[a-zA-Z'-]{2,20}$/;
+const CORS_PROXY = 'https://cors.nintynien.com/';
 
 export class ContextoOverlay extends BaseOverlay {
   constructor(config) {
@@ -11,15 +12,10 @@ export class ContextoOverlay extends BaseOverlay {
 
     const s = config.settings || {};
     this.endpoint = (s.endpoint || 'https://api.contexto.me/machado/en').replace(/\/+$/, '');
-    this.corsProxy = resolveCorsProxy(s.corsProxy);
     this.configuredGame = s.game ?? null;
     this.minGame = s.minGame ?? 1;
     this.maxGame = s.maxGame ?? 1300;
     this.maxVisible = s.maxVisible ?? 15;
-
-    if (this.corsProxy && config.debug) {
-      console.log('[contexto] CORS proxy enabled:', this.corsProxy);
-    }
 
     this.gameState = 'idle'; // idle | playing | won | revealed
     this.gameId = null;
@@ -235,8 +231,8 @@ export class ContextoOverlay extends BaseOverlay {
   }
 
   wrapProxy(targetUrl) {
-    if (!this.corsProxy) return targetUrl;
-    return `${this.corsProxy}${encodeURIComponent(targetUrl)}`;
+    // cors-anywhere style: append the raw target URL after the proxy origin.
+    return `${CORS_PROXY}${targetUrl}`;
   }
 
   // ── Leaderboard Rendering ──
@@ -511,13 +507,3 @@ function cssEscape(s) {
   return String(s).replace(/["\\]/g, '\\$&');
 }
 
-function resolveCorsProxy(value) {
-  if (!value) return null;
-  const v = String(value).trim();
-  // Shorthands
-  if (/^(on|1|true|corsproxy|corsproxy\.io)$/i.test(v)) return 'https://corsproxy.io/?url=';
-  if (/^allorigins$/i.test(v)) return 'https://api.allorigins.win/raw?url=';
-  // Full custom prefix — expected to end in something that accepts an encoded URL
-  if (/^https?:\/\//i.test(v)) return v;
-  return null;
-}
