@@ -123,6 +123,10 @@ export class ContextoOverlay extends BaseOverlay {
         this.giveUp();
         return;
       }
+      if (lower === '!hint') {
+        this.requestHint();
+        return;
+      }
       if (lower === '!endgame') {
         this.endGame();
         return;
@@ -448,6 +452,46 @@ export class ContextoOverlay extends BaseOverlay {
     } catch (err) {
       if (this.config.debug) console.warn('[contexto] giveUp failed', err);
       this.setBanner('Failed to reveal answer', 'revealed');
+    }
+  }
+
+  async requestHint() {
+    if (this.gameState !== 'playing') return;
+    if (this._hintInflight) return;
+    this._hintInflight = true;
+
+    const requestedGameId = this.gameId;
+    const sinceLast = Date.now() - this.lastRequestStartedAt;
+    if (sinceLast < MIN_REQUEST_SPACING_MS) {
+      await sleep(MIN_REQUEST_SPACING_MS - sinceLast);
+    }
+
+    this.lastRequestStartedAt = Date.now();
+    try {
+      const distance = this.bestRank ?? MAX_RANK;
+      const targetUrl = `${this.endpoint}/tip/${requestedGameId}/${distance}`;
+      const url = this.wrapProxy(targetUrl);
+      this.apiCallCount++;
+      this.updateDebug();
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (typeof data.distance !== 'number' || !data.lemma) {
+        throw new Error('Unexpected tip response shape');
+      }
+      if (this.gameId !== requestedGameId) return;
+
+      const result = { distance: data.distance, lemma: data.lemma, word: data.word || data.lemma };
+      this.cache.set(result.lemma, result);
+      if (data.word) this.cache.set(data.word, result);
+
+      this.addFeed('HINT', result.lemma, '#facc15', 'pending');
+      this.updateFeedResolved(result.lemma, result.distance);
+      this.recordGuess('HINT', result.lemma, '#facc15', result, /*fromApi*/ true);
+    } catch (err) {
+      if (this.config.debug) console.warn('[contexto] hint failed', err);
+    } finally {
+      this._hintInflight = false;
     }
   }
 
